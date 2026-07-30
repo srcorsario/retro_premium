@@ -1,25 +1,47 @@
 // js/app.js
-import { CONFIG } from './config.js';
+import ENV from './config.js';
 import { obtenerDatos } from './api.js';
-import { renderTabla } from './ui.js';
-import { simularPreparacionKit } from './pedidos.js';
+import { renderTabla, mostrarMensaje } from './ui.js';
 
-// Función que se ejecuta al pulsar una pestaña
-async function cargarVista(nombreHoja, contenedorID) {
-    const datos = await obtenerDatos(nombreHoja);
-    renderTabla(contenedorID, datos);
+// Variable para saber qué pestaña estamos viendo
+let vistaActual = ENV.SHEETS.COMPONENTES;
+
+// Función principal que carga los datos
+async function cargarVista(nombrePestana) {
+    vistaActual = nombrePestana;
+    
+    // Actualizar título
+    document.getElementById('titulo-vista').innerText = `Cargando ${nombrePestana}...`;
+    
+    // Obtener datos de nuestra API (CSV)
+    const datos = await obtenerDatos(nombrePestana);
+    
+    // Pintar en la pantalla
+    renderTabla('contenedor-tabla', datos, nombrePestana);
+    
+    // Cambiar título
+    document.getElementById('titulo-vista').innerText = `${nombrePestana} (${datos.length} registros)`;
 }
 
-// Cuando el HTML esté completamente cargado
+// Cuando la web esté lista
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('Aplicación Retro Components iniciada');
+    console.log(`${ENV.APP_NAME} iniciado`);
     
-    // Cargamos la vista principal por defecto (Ej. Componentes)
-    cargarVista(CONFIG.SHEETS.COMPONENTES, 'tbody-principal');
+    // Cargar la pestaña por defecto
+    cargarVista(vistaActual);
     
-    // Event listeners (Ejemplo de cómo conectar un botón a la lógica de pedidos)
-    const btnPedido = document.getElementById('btn-simular-pedido');
-    if(btnPedido) {
-        btnPedido.addEventListener('click', simularPreparacionKit);
-    }
+    // Poner a escuchar los botones de las pestañas
+    const botones = document.querySelectorAll('.tab-btn');
+    botones.forEach(boton => {
+        boton.addEventListener('click', (e) => {
+            // Quitar clase active a todos
+            botones.forEach(b => b.classList.remove('active'));
+            // Poner clase active al clicado
+            e.target.classList.add('active');
+            
+            // Cargar la pestaña correspondiente
+            const pestana = e.target.getAttribute('data-sheet');
+            if (pestana) cargarVista(pestana);
+        });
+    });
 });
