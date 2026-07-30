@@ -31,3 +31,7 @@ th { background-color: var(--border-color); color: var(--text-secondary); }
     font-weight: bold;
 }
 .btn:hover { opacity: 0.8; }
+
+/* Añadir al final de css/componentes.css */
+.row-warning { background-color: rgba(234, 179, 8, 0.15); } /* Amarillo transparente */
+.row-danger { background-color: rgba(239, 68, 68, 0.2); color: #fca5a5; } /* Rojo transparente */
