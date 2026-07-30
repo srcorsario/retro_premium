@@ -9,12 +9,11 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         return;
     }
 
-    // Filtrar filas vacías
     const datosLimpios = datos.filter(row => 
         Object.values(row).some(val => val !== '' && val !== null && val !== undefined)
     ).slice(0, ENV.MAX_TABLE_ROWS);
 
-    // ¡EL RETO! Si es la pestaña de Kits, usamos la lógica agrupada
+    // Si es la pestaña de Kits, usamos la lógica del acordeón
     if (nombrePestana === 'Kits_Consolas') {
         container.innerHTML = renderKitsAgrupados(datosLimpios);
         document.getElementById('titulo-vista').innerText = `Kits y Placas Disponibles`;
@@ -53,9 +52,8 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     `;
 }
 
-// --- LA FUNCIÓN QUE AGRUPA POR FAMILIA ---
+// --- ACORDEÓN DE KITS ---
 function renderKitsAgrupados(datos) {
-    // 1. Creamos la estructura de grupos: { "Super Nintendo": { "SNSP-CPU-01/02": [componentes...], ... } }
     const familias = {};
     
     datos.forEach(fila => {
@@ -68,7 +66,6 @@ function renderKitsAgrupados(datos) {
         familias[nombreFamilia][nombreKit].push(fila);
     });
 
-    // 2. Pintamos el HTML agrupado
     let htmlTotal = '';
     
     for (const [nombreFamilia, kits] of Object.entries(familias)) {
@@ -77,9 +74,14 @@ function renderKitsAgrupados(datos) {
         
         for (const [nombreKit, componentes] of Object.entries(kits)) {
             htmlTotal += `<div class="kit-card">`;
-            htmlTotal += `<h4 class="kit-title">📝 Placa: ${nombreKit}</h4>`;
             
-            // Creamos la tabla de componentes de ESTA placa específica
+            // EL BOTÓN DESPLEGABLE
+            htmlTotal += `<div class="kit-toggle" onclick="this.classList.toggle('active'); this.nextElementSibling.classList.toggle('hidden');">`;
+            htmlTotal += `📝 ${nombreKit} <span class="arrow">▶</span>`;
+            htmlTotal += `</div>`;
+            
+            // LA TABLA OCULTA
+            htmlTotal += `<div class="kit-table-container hidden">`;
             const headers = Object.keys(componentes[0]);
             htmlTotal += `<table><thead><tr>`;
             headers.forEach(h => { htmlTotal += `<th>${h}</th>`; });
@@ -91,9 +93,9 @@ function renderKitsAgrupados(datos) {
                 htmlTotal += `</tr>`;
             });
             
-            htmlTotal += `</tbody></table></div>`; // Cerramos kit-card
+            htmlTotal += `</tbody></table></div></div>`; 
         }
-        htmlTotal += `</div>`; // Cerramos family-group
+        htmlTotal += `</div>`; 
     }
     
     return htmlTotal;
