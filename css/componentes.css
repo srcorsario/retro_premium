@@ -35,3 +35,34 @@ th { background-color: var(--border-color); color: var(--text-secondary); }
 /* Añadir al final de css/componentes.css */
 .row-warning { background-color: rgba(234, 179, 8, 0.15); } /* Amarillo transparente */
 .row-danger { background-color: rgba(239, 68, 68, 0.2); color: #fca5a5; } /* Rojo transparente */
+
+/* Diseño para Familias y Kits */
+.family-group {
+    margin-bottom: 30px;
+    padding-left: 10px;
+    border-left: 4px solid var(--primary);
+}
+
+.family-header {
+    margin-top: 0;
+    color: var(--primary);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 5px;
+    font-size: 1.4rem;
+}
+
+.kit-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 15px;
+    margin-top: 15px;
+    margin-bottom: 15px;
+}
+
+.kit-title {
+    margin-top: 0;
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+    margin-bottom: 10px;
+}
