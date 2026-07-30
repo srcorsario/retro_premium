@@ -4,54 +4,99 @@ import ENV from './config.js';
 export function renderTabla(contenedorID, datos, nombrePestana) {
     const container = document.getElementById(contenedorID);
     
-    // Si no hay datos, mostramos mensaje
     if (!datos || datos.length === 0) {
         container.innerHTML = `<p style="text-align:center; color:var(--text-secondary);">No hay datos para mostrar en ${nombrePestana}.</p>`;
         return;
     }
 
-    // Filtrar filas vacías típicas de Google Sheets
+    // Filtrar filas vacías
     const datosLimpios = datos.filter(row => 
         Object.values(row).some(val => val !== '' && val !== null && val !== undefined)
-    ).slice(0, ENV.MAX_TABLE_ROWS); // Limitar filas por rendimiento
+    ).slice(0, ENV.MAX_TABLE_ROWS);
 
-    // 1. Construir Cabeceras dinámicamente
+    // ¡EL RETO! Si es la pestaña de Kits, usamos la lógica agrupada
+    if (nombrePestana === 'Kits_Consolas') {
+        container.innerHTML = renderKitsAgrupados(datosLimpios);
+        document.getElementById('titulo-vista').innerText = `Kits y Placas Disponibles`;
+        return;
+    }
+
+    // --- CÓDIGO NORMAL PARA EL RESTO DE PESTAÑAS ---
     const headers = Object.keys(datosLimpios[0]);
     let htmlHead = '<tr>';
     headers.forEach(h => { htmlHead += `<th>${h}</th>`; });
     htmlHead += '</tr>';
 
-    // 2. Construir Filas
     let htmlBody = '';
     datosLimpios.forEach(fila => {
         let esAlerta = false;
-
-        // Lógica de negocio visual: Si estamos en Stock y las unidades son <= mínimas
-        if (nombrePestana === ENV.SHEETS.STOCK) {
+        if (nombrePestana === 'Stock_Almacen') {
             const uds = parseFloat(fila['Uds_Disponibles']) || 0;
             const min = parseFloat(fila['Stock_Minimo_Alerta']) || 0;
             if (uds <= min && uds > 0) esAlerta = true;
-            if (uds === 0) esAlerta = 'critico'; // Sin stock
+            if (uds === 0) esAlerta = 'critico';
         }
-
-        // Aplicar clase CSS si hay alerta
         let claseFila = esAlerta === 'critico' ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
         
         htmlBody += `<tr ${claseFila}>`;
         headers.forEach(header => {
-            let valor = fila[header] || '';
-            htmlBody += `<td>${valor}</td>`;
+            htmlBody += `<td>${fila[header] || ''}</td>`;
         });
         htmlBody += '</tr>';
     });
 
-    // 3. Montar la tabla en el HTML
     container.innerHTML = `
         <table>
             <thead>${htmlHead}</thead>
             <tbody>${htmlBody}</tbody>
         </table>
     `;
+}
+
+// --- LA FUNCIÓN QUE AGRUPA POR FAMILIA ---
+function renderKitsAgrupados(datos) {
+    // 1. Creamos la estructura de grupos: { "Super Nintendo": { "SNSP-CPU-01/02": [componentes...], ... } }
+    const familias = {};
+    
+    datos.forEach(fila => {
+        const nombreFamilia = fila['Consola'] || 'Familia Desconocida';
+        const nombreKit = fila['ID_Kit'] || 'Kit Desconocido';
+        
+        if (!familias[nombreFamilia]) familias[nombreFamilia] = {};
+        if (!familias[nombreFamilia][nombreKit]) familias[nombreFamilia][nombreKit] = [];
+        
+        familias[nombreFamilia][nombreKit].push(fila);
+    });
+
+    // 2. Pintamos el HTML agrupado
+    let htmlTotal = '';
+    
+    for (const [nombreFamilia, kits] of Object.entries(familias)) {
+        htmlTotal += `<div class="family-group">`;
+        htmlTotal += `<h3 class="family-header">🎮 ${nombreFamilia}</h3>`;
+        
+        for (const [nombreKit, componentes] of Object.entries(kits)) {
+            htmlTotal += `<div class="kit-card">`;
+            htmlTotal += `<h4 class="kit-title">📝 Placa: ${nombreKit}</h4>`;
+            
+            // Creamos la tabla de componentes de ESTA placa específica
+            const headers = Object.keys(componentes[0]);
+            htmlTotal += `<table><thead><tr>`;
+            headers.forEach(h => { htmlTotal += `<th>${h}</th>`; });
+            htmlTotal += `</tr></thead><tbody>`;
+            
+            componentes.forEach(comp => {
+                htmlTotal += `<tr>`;
+                headers.forEach(h => { htmlTotal += `<td>${comp[h] || ''}</td>`; });
+                htmlTotal += `</tr>`;
+            });
+            
+            htmlTotal += `</tbody></table></div>`; // Cerramos kit-card
+        }
+        htmlTotal += `</div>`; // Cerramos family-group
+    }
+    
+    return htmlTotal;
 }
 
 export function mostrarMensaje(elementoID, texto, esError = false) {
