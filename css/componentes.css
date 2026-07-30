@@ -32,11 +32,14 @@ th { background-color: var(--border-color); color: var(--text-secondary); }
 }
 .btn:hover { opacity: 0.8; }
 
-/* Añadir al final de css/componentes.css */
-.row-warning { background-color: rgba(234, 179, 8, 0.15); } /* Amarillo transparente */
-.row-danger { background-color: rgba(239, 68, 68, 0.2); color: #fca5a5; } /* Rojo transparente */
+/* Alertas de Stock */
+.row-warning { background-color: rgba(234, 179, 8, 0.15); }
+.row-danger { background-color: rgba(239, 68, 68, 0.2); color: #fca5a5; }
 
-/* Diseño para Familias y Kits */
+/* =========================================
+   DISEÑO ACORDEÓN PARA FAMILIAS Y KITS
+   ========================================= */
+
 .family-group {
     margin-bottom: 30px;
     padding-left: 10px;
@@ -52,17 +55,48 @@ th { background-color: var(--border-color); color: var(--text-secondary); }
 }
 
 .kit-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius);
-    padding: 15px;
-    margin-top: 15px;
-    margin-bottom: 15px;
+    margin-top: 10px;
+    margin-bottom: 5px;
 }
 
-.kit-title {
-    margin-top: 0;
-    color: var(--text-secondary);
+/* El botón que se pulsa para desplegar */
+.kit-toggle {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 12px 15px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background 0.2s;
     font-size: 1.1rem;
-    margin-bottom: 10px;
+    color: var(--text-main);
+    user-select: none; /* Evita que se seleccione el texto al hacer clic rápido */
+}
+
+.kit-toggle:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* La flechita que indica estado */
+.arrow {
+    font-size: 0.8rem;
+    transition: transform 0.3s ease; /* Animación suave de giro */
+}
+
+/* Cuando está desplegado, la flecha gira 90 grados */
+.kit-toggle.active .arrow {
+    transform: rotate(90deg);
+}
+
+/* Contenedor de la tabla (lo que se oculta/muestra) */
+.kit-table-container {
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+    padding-top: 10px;
+}
+
+/* Clase mágica que oculta la tabla por defecto */
+.kit-table-container.hidden {
+    display: none;
 }
