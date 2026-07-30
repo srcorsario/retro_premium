@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard Retro Components</title>
+    <title>Retro Components Dashboard</title>
+    
     <!-- Cargamos los estilos por separado -->
     <link rel="stylesheet" href="css/variables.css">
     <link rel="stylesheet" href="css/componentes.css">
@@ -12,23 +13,37 @@
     <div class="container">
         <h1>🎮 Gestión de Componentes Retro</h1>
         
-        <div class="card">
-            <h2>Componentes Principales</h2>
-            <table>
-                <thead id="thead-principal"></thead>
-                <!-- Este tbody será rellenado por ui.js -->
-                <tbody id="tbody-principal"></tbody>
-            </table>
+        <!-- MENÚ DE PESTAÑAS -->
+        <!-- El atributo "data-sheet" debe coincidir EXACTAMENTE con el nombre de la pestaña en Google Sheets -->
+        <div class="tabs">
+            <button class="tab-btn active" data-sheet="Componentes">Componentes</button>
+            <button class="tab-btn" data-sheet="Stock_Almacen">Stock Físico</button>
+            <button class="tab-btn" data-sheet="Kits_Consolas">Kits</button>
+            <button class="tab-btn" data-sheet="Variantes_LCSC">LCSC Precios</button>
+            <button class="tab-btn" data-sheet="Gastos_Extra">Gastos</button>
         </div>
 
+        <!-- TARJETA PRINCIPAL (DONDE SE PINTARÁ LA TABLA) -->
         <div class="card">
-            <h2>🛠️ Módulo de Pedidos (Próximamente)</h2>
-            <button id="btn-simular-pedido" class="btn">Simular Pedido</button>
+            <h2 id="titulo-vista">Cargando datos...</h2>
+            <!-- Este div será reemplazado por la tabla completa que genere ui.js -->
+            <div id="contenedor-tabla" style="overflow-x: auto;">
+                <p>Conectando con Google Sheets...</p>
+            </div>
+        </div>
+
+        <!-- TARJETA SECUNDARIA (PREPARADA PARA EL FUTURO MÓDULO DE PEDIDOS) -->
+        <div class="card" style="margin-top: 20px;">
+            <h2>🛠️ Módulo de Preparación de Pedidos</h2>
+            <p style="color: var(--text-secondary); font-size: 14px;">Aquí irá la calculadora de kits (SNES, GameCube) y el botón para descontar stock del almacén.</p>
+            
+            <!-- Este botón lo conectaremos en el siguiente paso -->
+            <button id="btn-simular-pedido" class="btn" disabled>Calcular Pedido (En desarrollo)</button>
             <p id="msg-pedidos"></p>
         </div>
     </div>
 
-    <!-- IMPORTANTE: type="module" es necesario para poder usar import/export -->
+    <!-- IMPORTANTE: type="module" es obligatorio para poder usar los import/export de los archivos js -->
     <script type="module" src="js/app.js"></script>
 </body>
 </html>
