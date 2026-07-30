@@ -4,7 +4,7 @@ import { obtenerDatos } from './api.js';
 import { renderTabla, mostrarMensaje } from './ui.js';
 
 // Variable para saber qué pestaña estamos viendo
-let vistaActual = ENV.SHEETS.COMPONENTES;
+let vistaActual = 'Componentes';
 
 // Función principal que carga los datos
 async function cargarVista(nombrePestana) {
