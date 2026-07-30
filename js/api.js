@@ -9,7 +9,7 @@ export async function obtenerDatos(nombrePestana) {
         if (!gid) throw new Error(`No se encontró el GID para la pestaña: ${nombrePestana}`);
 
         // Usamos la URL pública y súper estable que me confirmaste
-        const url = `https://docs.google.com/spreadsheets/d/${ENV.SHEET_ID}/pub?gid=${gid}&single=true&output=csv`;
+        const url = `https://docs.google.com/spreadsheets/d/e/${ENV.SHEET_ID}/pub?gid=${gid}&single=true&output=csv`;
         
         const response = await fetch(url);
         if (!response.ok) throw new Error('Error en la red al leer CSV');
