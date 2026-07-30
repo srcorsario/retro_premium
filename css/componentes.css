@@ -6,7 +6,13 @@ body {
     padding: 20px;
 }
 
-.container { max-width: 1200px; margin: 0 auto; }
+/* Ocupa todo el ancho de la pantalla con un pequeño margen interior */
+.container { 
+    max-width: 100%; 
+    margin: 0 auto; 
+    padding: 0 30px;
+}
+
 h1 { text-align: center; }
 
 .card {
@@ -17,9 +23,30 @@ h1 { text-align: center; }
     margin-bottom: 20px;
 }
 
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border-color); }
-th { background-color: var(--border-color); color: var(--text-secondary); }
+table { 
+    width: 100%; 
+    border-collapse: collapse; 
+    font-size: 14px; 
+}
+
+th, td { 
+    padding: 12px; 
+    text-align: left; 
+    border-bottom: 1px solid var(--border-color); 
+}
+
+th { 
+    background-color: var(--border-color); 
+    color: var(--text-secondary); 
+}
+
+/* Evita que las URLs largas deformen las celdas, mostrando puntos suspensivos */
+td { 
+    max-width: 350px; 
+    overflow: hidden; 
+    text-overflow: ellipsis; 
+    white-space: nowrap; 
+}
 
 .btn {
     background: var(--primary);
@@ -32,7 +59,9 @@ th { background-color: var(--border-color); color: var(--text-secondary); }
 }
 .btn:hover { opacity: 0.8; }
 
-/* Alertas de Stock */
+/* =========================================
+   ALERTAS DE STOCK
+   ========================================= */
 .row-warning { background-color: rgba(234, 179, 8, 0.15); }
 .row-danger { background-color: rgba(239, 68, 68, 0.2); color: #fca5a5; }
 
@@ -71,7 +100,7 @@ th { background-color: var(--border-color); color: var(--text-secondary); }
     transition: background 0.2s;
     font-size: 1.1rem;
     color: var(--text-main);
-    user-select: none; /* Evita que se seleccione el texto al hacer clic rápido */
+    user-select: none; 
 }
 
 .kit-toggle:hover {
@@ -81,7 +110,7 @@ th { background-color: var(--border-color); color: var(--text-secondary); }
 /* La flechita que indica estado */
 .arrow {
     font-size: 0.8rem;
-    transition: transform 0.3s ease; /* Animación suave de giro */
+    transition: transform 0.3s ease; 
 }
 
 /* Cuando está desplegado, la flecha gira 90 grados */
@@ -91,7 +120,7 @@ th { background-color: var(--border-color); color: var(--text-secondary); }
 
 /* Contenedor de la tabla (lo que se oculta/muestra) */
 .kit-table-container {
-    overflow: hidden;
+    overflow-x: auto; /* Por si acaso una tabla es muy ancha, permite scroll horizontal solo en la tabla */
     transition: max-height 0.3s ease-out;
     padding-top: 10px;
 }
