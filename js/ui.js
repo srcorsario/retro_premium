@@ -9,6 +9,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         return;
     }
 
+    // Filtrar filas vacías típicas de Google Sheets
     const datosLimpios = datos.filter(row => 
         Object.values(row).some(val => val !== '' && val !== null && val !== undefined)
     ).slice(0, ENV.MAX_TABLE_ROWS);
@@ -29,17 +30,20 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     let htmlBody = '';
     datosLimpios.forEach(fila => {
         let esAlerta = false;
+        
+        // Lógica de negocio visual: Si estamos en Stock y las unidades son <= mínimas
         if (nombrePestana === 'Stock_Almacen') {
             const uds = parseFloat(fila['Uds_Disponibles']) || 0;
             const min = parseFloat(fila['Stock_Minimo_Alerta']) || 0;
             if (uds <= min && uds > 0) esAlerta = true;
             if (uds === 0) esAlerta = 'critico';
         }
+        
         let claseFila = esAlerta === 'critico' ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
         
         htmlBody += `<tr ${claseFila}>`;
         headers.forEach(header => {
-            htmlBody += `<td>${fila[header] || ''}</td>`;
+            htmlBody += `<td title="${fila[header] || ''}">${fila[header] || ''}</td>`; // Añadido title para ver URL completa al pasar el ratón
         });
         htmlBody += '</tr>';
     });
@@ -52,7 +56,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     `;
 }
 
-// --- ACORDEÓN DE KITS ---
+// --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
 function renderKitsAgrupados(datos) {
     const familias = {};
     
@@ -89,7 +93,9 @@ function renderKitsAgrupados(datos) {
             
             componentes.forEach(comp => {
                 htmlTotal += `<tr>`;
-                headers.forEach(h => { htmlTotal += `<td>${comp[h] || ''}</td>`; });
+                headers.forEach(h => { 
+                    htmlTotal += `<td title="${comp[h] || ''}">${comp[h] || ''}</td>`; 
+                });
                 htmlTotal += `</tr>`;
             });
             
