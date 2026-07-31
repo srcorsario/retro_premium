@@ -102,16 +102,36 @@ td {
     font-size: 1.1rem;
     color: var(--text-main);
     user-select: none; 
+    gap: 15px; /* Espacio entre el texto y la flecha */
 }
 
 .kit-toggle:hover {
     background: rgba(255, 255, 255, 0.1);
 }
 
+/* NUEVO: Contenedor para alinear el componente y sus kits */
+.kit-info-wrapper {
+    display: grid;
+    grid-template-columns: max-content 1fr; /* Col 1: Componente, Col 2: Kits (resto del espacio) */
+    align-items: baseline;
+    column-gap: 20px; /* Separación entre la columna del componente y la de kits */
+    row-gap: 5px;
+    flex: 1; /* Ocupa todo el espacio disponible antes de la flecha */
+    min-width: 0; /* Previene que el grid se desborde */
+}
+
+/* NUEVO: Estilo para el texto de los kits */
+.kits-used {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    word-break: break-word; /* Si hay muchos kits, el texto salta a la siguiente línea dentro de su columna */
+}
+
 /* La flechita que indica estado */
 .arrow {
     font-size: 0.8rem;
     transition: transform 0.3s ease; 
+    margin-left: auto; /* Empuja la flecha a la derecha */
 }
 
 /* Cuando está desplegado, la flecha gira 90 grados */
@@ -227,7 +247,7 @@ td {
 }
 
 /* =========================================
-   NUEVO: MENÚ DE PESTAÑAS PRINCIPAL
+   MENÚ DE PESTAÑAS PRINCIPAL
    ========================================= */
 .tabs {
     display: flex;
