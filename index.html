@@ -3,14 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" href="favicon.ico" type="image/x-icon">
     <title>Retro Components Dashboard</title>
+    
+    <!-- Cargamos los estilos por separado -->
     <link rel="stylesheet" href="css/variables.css">
     <link rel="stylesheet" href="css/componentes.css">
 </head>
 <body>
     <div class="container">
         <h1>🎮 Gestión de Componentes Retro</h1>
+        
+        <!-- MENÚ DE PESTAÑAS -->
         <div class="tabs">
             <button class="tab-btn active" data-sheet="Componentes">Componentes</button>
             <button class="tab-btn" data-sheet="Stock_Almacen">Stock Físico</button>
@@ -20,6 +23,7 @@
             <button class="tab-btn" data-sheet="Gastos_Extra">Gastos</button>
         </div>
 
+        <!-- TARJETA PRINCIPAL -->
         <div class="card">
             <h2 id="titulo-vista">Cargando datos...</h2>
             <div id="contenedor-tabla" style="overflow-x: auto;">
@@ -27,6 +31,7 @@
             </div>
         </div>
 
+        <!-- TARJETA SECUNDARIA -->
         <div class="card" style="margin-top: 20px;">
             <h2>🛠️ Módulo de Preparación de Pedidos</h2>
             <p style="color: var(--text-secondary); font-size: 14px;">Selecciona un kit para verificar si tenemos el stock físico necesario en almacén.</p>
@@ -43,6 +48,8 @@
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                     <button id="btn-sync-lcsc" class="btn" style="background: var(--success);">Sincronizar LCSC (Auto)</button>
                     <button id="btn-sync-aliexpress" class="btn" style="background: var(--primary);">Añadir Variante AliExpress (Manual)</button>
+                    <!-- NUEVO: Botón para sincronizar la columna R -->
+                    <button id="btn-sync-kits-col" class="btn" style="background: var(--text-secondary);">Sincronizar Col Kits (Sheets)</button>
                 </div>
             </div>
             
@@ -50,7 +57,7 @@
         </div>
     </div>
 
-    <!-- MODAL ALIEXPRESS ESTRUCTURADO -->
+    <!-- MODAL ALIEXPRESS -->
     <div id="modal-aliexpress" class="modal-overlay" style="display: none;">
         <div class="modal-content">
             <h3>Añadir Variante AliExpress</h3>
