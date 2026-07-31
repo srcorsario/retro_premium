@@ -75,9 +75,9 @@ async function verificarStock() {
             }
         });
 
-        let faltantes = [];
         let todoOk = true;
         let requisitosSumados = {};
+        let logDetallado = []; // NUEVO: Array para guardar el log de verificación
 
         requisitosKit.forEach(req => {
             const idComp = req['ID_Componente'];
@@ -86,26 +86,52 @@ async function verificarStock() {
             requisitosSumados[idComp] += cantidad;
         });
 
+        // MODIFICADO: Bucle para verificar y generar el log detallado
         for (const [idComp, cantidadNecesaria] of Object.entries(requisitosSumados)) {
             const disponible = stockMapa[idComp] || 0;
+            let estado = '';
+            let icono = '';
+            
             if (disponible < cantidadNecesaria) {
                 todoOk = false;
-                faltantes.push(`🔴 <strong>${idComp}</strong> (Faltan ${cantidadNecesaria - disponible} uds)`);
+                estado = `Faltan ${cantidadNecesaria - disponible} uds`;
+                icono = '🔴';
+            } else {
+                estado = `OK (Disponibles: ${disponible})`;
+                icono = '🟢';
             }
+            
+            // Añadir al log visual
+            logDetallado.push(`${icono} <strong>${idComp}</strong>: Necesita ${cantidadNecesaria} - ${estado}`);
         }
 
-        if (todoOk) {
-            mostrarMensaje('msg-pedidos', `✅ <strong>Stock suficiente</strong> para preparar el kit: ${kitSeleccionado}.`, false);
-        } else {
-            mostrarMensaje('msg-pedidos', `❌ <strong>Faltan componentes</strong> para ${kitSeleccionado}:<br>${faltantes.join('<br>')}`, true);
-        }
+        // NUEVO: Imprimir log en consola para debug técnico
+        console.log(`--- Log de Verificación para ${kitSeleccionado} ---`);
+        console.table(Object.entries(requisitosSumados).map(([id, nec]) => ({
+            Componente: id,
+            Necesario: nec,
+            Disponible: stockMapa[id] || 0,
+            Estado: (stockMapa[id] || 0) >= nec ? 'OK' : 'FALTA'
+        })));
+
+        // MODIFICADO: Construir el mensaje final con el log incluido
+        let mensajeFinal = todoOk 
+            ? `✅ <strong>Stock suficiente</strong> para preparar el kit: ${kitSeleccionado}.<br>` 
+            : `❌ <strong>Faltan componentes</strong> para ${kitSeleccionado}.<br>`;
+            
+        mensajeFinal += `<div style="margin-top:10px; font-size:12px; color:var(--text-secondary); border-top:1px solid var(--border-color); padding-top:8px;">
+                            <em>Log de verificación:</em><br>${logDetallado.join('<br>')}
+                         </div>`;
+
+        mostrarMensaje('msg-pedidos', mensajeFinal, !todoOk);
+
     } catch (error) {
         mostrarMensaje('msg-pedidos', 'Error al verificar el stock.', true);
         console.error(error);
     }
 }
 
-// NUEVO: Solicita al backend que actualice el stock de LCSC automáticamente
+// Solicita al backend que actualice el stock de LCSC automáticamente
 async function sincronizarLCSC() {
     mostrarMensaje('msg-pedidos', '🔄 Sincronizando LCSC en Google Sheets...', false);
     
@@ -119,7 +145,7 @@ async function sincronizarLCSC() {
     }
 }
 
-// NUEVO: Muestra el pop-up para pegar los datos de AliExpress
+// Muestra el pop-up para pegar los datos de AliExpress
 function abrirModalAliExpress() {
     const modal = document.getElementById('modal-aliexpress');
     const textarea = document.getElementById('aliexpress-raw-data');
@@ -129,7 +155,7 @@ function abrirModalAliExpress() {
     }
 }
 
-// NUEVO: Oculta el pop-up
+// Oculta el pop-up
 function cerrarModalAliExpress() {
     const modal = document.getElementById('modal-aliexpress');
     if (modal) {
@@ -137,7 +163,7 @@ function cerrarModalAliExpress() {
     }
 }
 
-// NUEVO: Envía el texto pegado en el modal al backend de Google Apps Script
+// Envía el texto pegado en el modal al backend de Google Apps Script
 async function enviarDatosAliExpress() {
     const textarea = document.getElementById('aliexpress-raw-data');
     if (!textarea) return;
