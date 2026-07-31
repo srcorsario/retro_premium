@@ -11,11 +11,14 @@ export async function inicializarModuloPedidos() {
     if (pedidosInicializado) return;
     
     const select = document.getElementById('select-kit');
-    const btn = document.getElementById('btn-verificar-stock');
-    const btnSync = document.getElementById('btn-sync-proveedores'); // NUEVO
+    const btnVerificar = document.getElementById('btn-verificar-stock');
+    const btnSyncLCSC = document.getElementById('btn-sync-lcsc');
+    const btnSyncAli = document.getElementById('btn-sync-aliexpress');
+    const btnCancelAli = document.getElementById('btn-cancel-aliexpress');
+    const btnSubmitAli = document.getElementById('btn-submit-aliexpress');
     
     // Manejo defensivo del DOM
-    if (!select || !btn) return;
+    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli) return;
 
     // Cargar kits en el select
     const datosKits = await obtenerDatos('Kits_Consolas');
@@ -29,12 +32,12 @@ export async function inicializarModuloPedidos() {
         select.appendChild(option);
     });
 
-    btn.addEventListener('click', verificarStock);
-    
-    // NUEVO: Listener para sincronización de proveedores
-    if (btnSync) {
-        btnSync.addEventListener('click', sincronizarStockProveedores);
-    }
+    // Asignar listeners
+    btnVerificar.addEventListener('click', verificarStock);
+    btnSyncLCSC.addEventListener('click', sincronizarLCSC);
+    btnSyncAli.addEventListener('click', abrirModalAliExpress);
+    btnCancelAli.addEventListener('click', cerrarModalAliExpress);
+    btnSubmitAli.addEventListener('click', enviarDatosAliExpress);
     
     pedidosInicializado = true;
 }
@@ -102,20 +105,60 @@ async function verificarStock() {
     }
 }
 
-// NUEVO: Solicita al backend de Google Apps Script que actualice el stock de LCSC y AliExpress
-export async function sincronizarStockProveedores() {
-    mostrarMensaje('msg-pedidos', '🔄 Solicitando actualización a Google Sheets (LCSC/AliExpress)...', false);
+// NUEVO: Solicita al backend que actualice el stock de LCSC automáticamente
+async function sincronizarLCSC() {
+    mostrarMensaje('msg-pedidos', '🔄 Sincronizando LCSC en Google Sheets...', false);
     
-    // Usamos actualizarDatos para enviar una acción específica al backend
-    // El backend deberá interpretar esta acción, hacer las peticiones HTTP a los proveedores y actualizar la hoja
-    const exito = await actualizarDatos({ action: 'sync_stock_proveedores' });
+    const exito = await actualizarDatos({ action: 'sync_lcsc' });
     
     if (exito) {
-        mostrarMensaje('msg-pedidos', '✅ Sincronización completada. Actualizando vista...', false);
-        // Recargar la página después de 2 segundos para que obtenerDatos traiga el CSV actualizado
+        mostrarMensaje('msg-pedidos', '✅ Sincronización LCSC completada. Actualizando vista...', false);
         setTimeout(() => location.reload(), 2000);
     } else {
-        mostrarMensaje('msg-pedidos', '❌ Error al sincronizar. Asegúrate de que el Google Apps Script soporta la acción "sync_stock_proveedores".', true);
+        mostrarMensaje('msg-pedidos', '❌ Error al sincronizar LCSC. Verifica el backend de Apps Script.', true);
+    }
+}
+
+// NUEVO: Muestra el pop-up para pegar los datos de AliExpress
+function abrirModalAliExpress() {
+    const modal = document.getElementById('modal-aliexpress');
+    const textarea = document.getElementById('aliexpress-raw-data');
+    if (modal && textarea) {
+        textarea.value = ''; // Limpiar por si se quedó texto viejo
+        modal.style.display = 'flex';
+    }
+}
+
+// NUEVO: Oculta el pop-up
+function cerrarModalAliExpress() {
+    const modal = document.getElementById('modal-aliexpress');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// NUEVO: Envía el texto pegado en el modal al backend de Google Apps Script
+async function enviarDatosAliExpress() {
+    const textarea = document.getElementById('aliexpress-raw-data');
+    if (!textarea) return;
+    
+    const rawData = textarea.value.trim();
+    if (!rawData) {
+        mostrarMensaje('msg-pedidos', '❌ El cuadro de texto está vacío.', true);
+        return;
+    }
+
+    cerrarModalAliExpress();
+    mostrarMensaje('msg-pedidos', '🔄 Enviando datos de AliExpress a Google Sheets...', false);
+
+    // Enviamos el texto plano al backend para que lo procese
+    const exito = await actualizarDatos({ action: 'update_aliexpress_manual', raw_data: rawData });
+    
+    if (exito) {
+        mostrarMensaje('msg-pedidos', '✅ Datos de AliExpress actualizados. Recargando vista...', false);
+        setTimeout(() => location.reload(), 2000);
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
     }
 }
 
