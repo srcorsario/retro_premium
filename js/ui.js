@@ -1,12 +1,12 @@
 // js/ui.js
 import ENV from './config.js';
 
-// NUEVO: Clave para guardar la configuración de columnas en LocalStorage
+// Clave para guardar la configuración de columnas en LocalStorage
 const LS_COL_VISIBILITY = 'retro_premium_col_visibility';
 
 export function renderTabla(contenedorID, datos, nombrePestana) {
     const container = document.getElementById(contenedorID);
-    // MODIFICADO: Manejo defensivo del DOM
+    // Manejo defensivo del DOM
     if (!container) return;
     
     if (!datos || datos.length === 0) {
@@ -22,7 +22,6 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     // Si es la pestaña de Kits, usamos la lógica del acordeón
     if (nombrePestana === 'Kits_Consolas') {
         container.innerHTML = renderKitsAgrupados(datosLimpios);
-        // MODIFICADO: Manejo defensivo del DOM
         const tituloVista = document.getElementById('titulo-vista');
         if (tituloVista) tituloVista.innerText = `Kits y Placas Disponibles`;
         return;
@@ -37,10 +36,11 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     }
 
     // --- CÓDIGO NORMAL PARA EL RESTO DE PESTAÑAS ---
-    const allHeaders = Object.keys(datosLimpios[0]);
+    // NUEVO: Excluir la columna 'Kits_que_lo_usan' de los headers generales porque la inyectaremos en línea
+    const allHeaders = Object.keys(datosLimpios[0]).filter(h => h !== 'Kits_que_lo_usan');
     let visibleHeaders = allHeaders;
 
-    // NUEVO: Lógica de visibilidad de columnas exclusiva para "Componentes"
+    // Lógica de visibilidad de columnas exclusiva para "Componentes"
     if (nombrePestana === 'Componentes') {
         // Leer de LocalStorage qué columnas estamos ocultando
         let hiddenCols = [];
@@ -98,7 +98,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     }
 
     let htmlHead = '<tr>';
-    visibleHeaders.forEach(h => { htmlHead += `<th>${h}</th>`; }); // MODIFICADO: Usar visibleHeaders
+    visibleHeaders.forEach(h => { htmlHead += `<th>${h}</th>`; });
     htmlHead += '</tr>';
 
     let htmlBody = '';
@@ -106,6 +106,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
 
     datosLimpios.forEach(fila => {
         let esAlerta = false;
+        let esSinStock = false; // NUEVO: Bandera para stock crítico en componentes
         
         // Lógica de negocio visual: Si estamos en Stock y las unidades son <= mínimas
         if (nombrePestana === 'Stock_Almacen') {
@@ -114,12 +115,28 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
             if (uds <= min && uds > 0) esAlerta = true;
             if (uds === 0) esAlerta = 'critico';
         }
+
+        // NUEVO: Lógica para pintar de rojo los componentes sin stock
+        if (nombrePestana === 'Componentes') {
+            const precioPack = (fila['Precio_Pack'] || '').toLowerCase();
+            if (precioPack.includes('sin stock') || precioPack.includes('no disponible')) {
+                esSinStock = true;
+            }
+        }
         
-        let claseFila = esAlerta === 'critico' ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
+        // MODIFICADO: Evaluar también esSinStock para aplicar la clase row-danger
+        let claseFila = (esAlerta === 'critico' || esSinStock) ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
         
         htmlBody += `<tr ${claseFila}>`;
-        visibleHeaders.forEach(header => { // MODIFICADO: Usar visibleHeaders
-            htmlBody += `<td title="${fila[header] || ''}">${fila[header] || ''}</td>`; // Añadido title para ver URL completa al pasar el ratón
+        visibleHeaders.forEach(header => {
+            let cellContent = fila[header] || '';
+
+            // NUEVO: Agregar entre paréntesis los kits que lo usan, al lado del ID_Componente
+            if (nombrePestana === 'Componentes' && header === 'ID_Componente' && fila['Kits_que_lo_usan']) {
+                cellContent += ` <small style="color: var(--text-secondary); font-size: 10px;">(${fila['Kits_que_lo_usan']})</small>`;
+            }
+
+            htmlBody += `<td title="${fila[header] || ''}">${cellContent}</td>`; // Añadido title para ver URL completa al pasar el ratón
         });
         htmlBody += '</tr>';
     });
@@ -131,7 +148,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         </table>
     `;
 
-    // NUEVO: Añadir la tabla respetando si ya inyectamos los toggles en "Componentes"
+    // Añadir la tabla respetando si ya inyectamos los toggles en "Componentes"
     if (nombrePestana === 'Componentes') {
         container.insertAdjacentHTML('beforeend', tableHtml);
     } else {
@@ -220,7 +237,11 @@ function renderVariantesAgrupadas(datos) {
         htmlTotal += `</tr></thead><tbody>`;
         
         variantes.forEach(variante => {
-            htmlTotal += `<tr>`;
+            // NUEVO: Lógica para pintar de rojo las filas sin stock en las variantes
+            const stock = parseInt(variante['Stock_Packs'] || '0', 10);
+            let claseFila = stock === 0 ? 'class="row-danger"' : '';
+
+            htmlTotal += `<tr ${claseFila}>`;
             headers.forEach(h => { 
                 htmlTotal += `<td title="${variante[h] || ''}">${variante[h] || ''}</td>`; 
             });
@@ -236,7 +257,7 @@ function renderVariantesAgrupadas(datos) {
 
 export function mostrarMensaje(elementoID, texto, esError = false) {
     const el = document.getElementById(elementoID);
-    // MODIFICADO: Manejo defensivo del DOM
+    // Manejo defensivo del DOM
     if (el) {
         el.innerText = texto;
         el.style.color = esError ? 'var(--danger)' : 'var(--success)';
