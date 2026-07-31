@@ -14,8 +14,9 @@ export async function inicializarModuloPedidos() {
     const btnSyncAli = document.getElementById('btn-sync-aliexpress');
     const btnCancelAli = document.getElementById('btn-cancel-aliexpress');
     const btnSubmitAli = document.getElementById('btn-submit-aliexpress');
+    const btnSyncKitsCol = document.getElementById('btn-sync-kits-col'); // NUEVO
     
-    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli) return;
+    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncKitsCol) return;
 
     const datosKits = await obtenerDatos('Kits_Consolas');
     const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
@@ -33,6 +34,7 @@ export async function inicializarModuloPedidos() {
     btnSyncAli.addEventListener('click', abrirModalAliExpress);
     btnCancelAli.addEventListener('click', cerrarModalAliExpress);
     btnSubmitAli.addEventListener('click', enviarDatosAliExpress);
+    btnSyncKitsCol.addEventListener('click', sincronizarKitsUsados); // NUEVO
     
     pedidosInicializado = true;
 }
@@ -98,7 +100,6 @@ async function verificarStock() {
     }
 }
 
-// MODIFICADO: Usamos confirm() para un pop-up limpio con recarga directa
 async function sincronizarLCSC() {
     mostrarMensaje('msg-pedidos', '🔄 Enviando orden de sincronización a Google Sheets...', false);
     const exito = await actualizarDatos({ action: 'sync_lcsc' });
@@ -137,7 +138,6 @@ function cerrarModalAliExpress() {
     if (modal) modal.style.display = 'none';
 }
 
-// MODIFICADO: Usamos confirm() para un pop-up limpio con recarga directa
 async function enviarDatosAliExpress() {
     const idComp = document.getElementById('ali-id-componente').value;
     const uds = document.getElementById('ali-uds-pack').value;
@@ -168,5 +168,20 @@ async function enviarDatosAliExpress() {
         }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
+    }
+}
+
+// NUEVA FUNCIÓN: Envía la orden a Google Sheets para rellenar la columna R
+async function sincronizarKitsUsados() {
+    mostrarMensaje('msg-pedidos', '🔄 Actualizando columna "Kits_que_lo_usan" en Google Sheets...', false);
+    const exito = await actualizarDatos({ action: 'sync_kits_usados' });
+    if (exito) {
+        if (confirm("✅ ¡Columna de Kits actualizada en Google Sheets!\n\nPulsa Aceptar para refrescar la web.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '✅ Columna actualizada. Refresca la web cuando quieras.', false);
+        }
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al actualizar la columna en Google Sheets.', true);
     }
 }
