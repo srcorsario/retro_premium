@@ -1,5 +1,5 @@
 // js/pedidos.js
-// MODIFICADO: Corregido import - config.js exporta ENV como default, no CONFIG como named export
+// MODIFICADO: Se corrige el import para usar el export por defecto de config.js
 import ENV from './config.js';
 import { obtenerDatos, actualizarDatos } from './api.js';
 import { mostrarMensaje } from './ui.js';
