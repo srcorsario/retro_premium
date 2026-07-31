@@ -3,10 +3,8 @@ import ENV from './config.js';
 import { obtenerDatos, actualizarDatos } from './api.js';
 import { mostrarMensaje } from './ui.js';
 
-// Bandera para evitar registrar listeners duplicados
 let pedidosInicializado = false;
 
-// Inicializa el módulo cargando los kits en el selector
 export async function inicializarModuloPedidos() {
     if (pedidosInicializado) return;
     
@@ -17,12 +15,10 @@ export async function inicializarModuloPedidos() {
     const btnCancelAli = document.getElementById('btn-cancel-aliexpress');
     const btnSubmitAli = document.getElementById('btn-submit-aliexpress');
     
-    // Manejo defensivo del DOM
     if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli) return;
 
-    // Cargar kits en el select
     const datosKits = await obtenerDatos('Kits_Consolas');
-    const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))]; // Evitar vacíos
+    const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
     
     select.innerHTML = '<option value="">Selecciona un Kit...</option>';
     kitsUnicos.forEach(kit => {
@@ -32,7 +28,6 @@ export async function inicializarModuloPedidos() {
         select.appendChild(option);
     });
 
-    // Asignar listeners
     btnVerificar.addEventListener('click', verificarStock);
     btnSyncLCSC.addEventListener('click', sincronizarLCSC);
     btnSyncAli.addEventListener('click', abrirModalAliExpress);
@@ -42,11 +37,9 @@ export async function inicializarModuloPedidos() {
     pedidosInicializado = true;
 }
 
-// Verifica si hay stock suficiente para el kit seleccionado
 async function verificarStock() {
     const select = document.getElementById('select-kit');
     if (!select) return;
-    
     const kitSeleccionado = select.value;
     
     if (!kitSeleccionado) {
@@ -64,34 +57,25 @@ async function verificarStock() {
 
         const requisitosKit = datosKits.filter(k => k['ID_Kit'] === kitSeleccionado);
         const stockMapa = {};
-        
         datosStock.forEach(s => {
             const idComp = s['ID_Componente'];
             const uds = parseFloat(s['Uds_Disponibles']) || 0;
-            if (stockMapa[idComp]) {
-                stockMapa[idComp] += uds;
-            } else {
-                stockMapa[idComp] = uds;
-            }
+            stockMapa[idComp] = (stockMapa[idComp] || 0) + uds;
         });
 
         let todoOk = true;
         let requisitosSumados = {};
-        let logDetallado = []; // NUEVO: Array para guardar el log de verificación
+        let logDetallado = [];
 
         requisitosKit.forEach(req => {
             const idComp = req['ID_Componente'];
             const cantidad = parseFloat(req['Cantidad']) || 0;
-            if (!requisitosSumados[idComp]) requisitosSumados[idComp] = 0;
-            requisitosSumados[idComp] += cantidad;
+            requisitosSumados[idComp] = (requisitosSumados[idComp] || 0) + cantidad;
         });
 
-        // MODIFICADO: Bucle para verificar y generar el log detallado
         for (const [idComp, cantidadNecesaria] of Object.entries(requisitosSumados)) {
             const disponible = stockMapa[idComp] || 0;
-            let estado = '';
-            let icono = '';
-            
+            let estado, icono;
             if (disponible < cantidadNecesaria) {
                 todoOk = false;
                 estado = `Faltan ${cantidadNecesaria - disponible} uds`;
@@ -100,95 +84,82 @@ async function verificarStock() {
                 estado = `OK (Disponibles: ${disponible})`;
                 icono = '🟢';
             }
-            
-            // Añadir al log visual
             logDetallado.push(`${icono} <strong>${idComp}</strong>: Necesita ${cantidadNecesaria} - ${estado}`);
         }
 
-        // NUEVO: Imprimir log en consola para debug técnico
-        console.log(`--- Log de Verificación para ${kitSeleccionado} ---`);
-        console.table(Object.entries(requisitosSumados).map(([id, nec]) => ({
-            Componente: id,
-            Necesario: nec,
-            Disponible: stockMapa[id] || 0,
-            Estado: (stockMapa[id] || 0) >= nec ? 'OK' : 'FALTA'
-        })));
-
-        // MODIFICADO: Construir el mensaje final con el log incluido
         let mensajeFinal = todoOk 
             ? `✅ <strong>Stock suficiente</strong> para preparar el kit: ${kitSeleccionado}.<br>` 
             : `❌ <strong>Faltan componentes</strong> para ${kitSeleccionado}.<br>`;
-            
-        mensajeFinal += `<div style="margin-top:10px; font-size:12px; color:var(--text-secondary); border-top:1px solid var(--border-color); padding-top:8px;">
-                            <em>Log de verificación:</em><br>${logDetallado.join('<br>')}
-                         </div>`;
+        mensajeFinal += `<div style="margin-top:10px; font-size:12px; color:var(--text-secondary); border-top:1px solid var(--border-color); padding-top:8px;"><em>Log de verificación:</em><br>${logDetallado.join('<br>')}</div>`;
 
         mostrarMensaje('msg-pedidos', mensajeFinal, !todoOk);
-
     } catch (error) {
         mostrarMensaje('msg-pedidos', 'Error al verificar el stock.', true);
-        console.error(error);
     }
 }
 
-// Solicita al backend que actualice el stock de LCSC automáticamente
 async function sincronizarLCSC() {
     mostrarMensaje('msg-pedidos', '🔄 Sincronizando LCSC en Google Sheets...', false);
-    
     const exito = await actualizarDatos({ action: 'sync_lcsc' });
-    
     if (exito) {
         mostrarMensaje('msg-pedidos', '✅ Sincronización LCSC completada. Actualizando vista...', false);
-        setTimeout(() => location.reload(), 2000);
+        setTimeout(() => location.reload(), 3000); // Damos 3 segundos para que Google procese
     } else {
-        mostrarMensaje('msg-pedidos', '❌ Error al sincronizar LCSC. Verifica el backend de Apps Script.', true);
+        mostrarMensaje('msg-pedidos', '❌ Error al sincronizar LCSC.', true);
     }
 }
 
-// Muestra el pop-up para pegar los datos de AliExpress
-function abrirModalAliExpress() {
+async function abrirModalAliExpress() {
     const modal = document.getElementById('modal-aliexpress');
-    const textarea = document.getElementById('aliexpress-raw-data');
-    if (modal && textarea) {
-        textarea.value = ''; // Limpiar por si se quedó texto viejo
+    const selectComp = document.getElementById('ali-id-componente');
+    if (modal && selectComp) {
+        // Cargar componentes si el select está vacío
+        if (selectComp.options.length === 0) {
+            const datosComp = await obtenerDatos('Componentes');
+            datosComp.forEach(c => {
+                if (c['ID_Componente']) {
+                    const opt = document.createElement('option');
+                    opt.value = c['ID_Componente'];
+                    opt.textContent = c['ID_Componente'];
+                    selectComp.appendChild(opt);
+                }
+            });
+        }
         modal.style.display = 'flex';
     }
 }
 
-// Oculta el pop-up
 function cerrarModalAliExpress() {
     const modal = document.getElementById('modal-aliexpress');
-    if (modal) {
-        modal.style.display = 'none';
-    }
+    if (modal) modal.style.display = 'none';
 }
 
-// Envía el texto pegado en el modal al backend de Google Apps Script
 async function enviarDatosAliExpress() {
-    const textarea = document.getElementById('aliexpress-raw-data');
-    if (!textarea) return;
-    
-    const rawData = textarea.value.trim();
-    if (!rawData) {
-        mostrarMensaje('msg-pedidos', '❌ El cuadro de texto está vacío.', true);
+    const idComp = document.getElementById('ali-id-componente').value;
+    const uds = document.getElementById('ali-uds-pack').value;
+    const precio = document.getElementById('ali-precio-pack').value;
+    const stock = document.getElementById('ali-stock-packs').value;
+
+    if (!idComp || !precio || precio <= 0) {
+        mostrarMensaje('msg-pedidos', '❌ Faltan datos o el precio no es válido.', true);
         return;
     }
 
     cerrarModalAliExpress();
-    mostrarMensaje('msg-pedidos', '🔄 Enviando datos de AliExpress a Google Sheets...', false);
+    mostrarMensaje('msg-pedidos', '🔄 Guardando variante en Google Sheets...', false);
 
-    // Enviamos el texto plano al backend para que lo procese
-    const exito = await actualizarDatos({ action: 'update_aliexpress_manual', raw_data: rawData });
+    const exito = await actualizarDatos({ 
+        action: 'update_aliexpress_manual', 
+        idComponente: idComp,
+        udsPack: uds,
+        precioPack: precio,
+        stockPacks: stock
+    });
     
     if (exito) {
-        mostrarMensaje('msg-pedidos', '✅ Datos de AliExpress actualizados. Recargando vista...', false);
+        mostrarMensaje('msg-pedidos', '✅ Variante guardada. Recargando vista...', false);
         setTimeout(() => location.reload(), 2000);
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
     }
-}
-
-// Mantenemos la función original por compatibilidad hacia atrás
-export async function simularPreparacionKit() {
-    verificarStock();
 }
