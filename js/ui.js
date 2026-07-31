@@ -36,7 +36,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     }
 
     // --- CÓDIGO NORMAL PARA EL RESTO DE PESTAÑAS ---
-    // NUEVO: Excluir la columna 'Kits_que_lo_usan' de los headers generales porque la inyectaremos en línea
+    // Excluir la columna 'Kits_que_lo_usan' de los headers generales porque la inyectaremos en línea
     const allHeaders = Object.keys(datosLimpios[0]).filter(h => h !== 'Kits_que_lo_usan');
     let visibleHeaders = allHeaders;
 
@@ -106,7 +106,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
 
     datosLimpios.forEach(fila => {
         let esAlerta = false;
-        let esSinStock = false; // NUEVO: Bandera para stock crítico en componentes
+        let esSinStock = false; 
         
         // Lógica de negocio visual: Si estamos en Stock y las unidades son <= mínimas
         if (nombrePestana === 'Stock_Almacen') {
@@ -116,7 +116,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
             if (uds === 0) esAlerta = 'critico';
         }
 
-        // NUEVO: Lógica para pintar de rojo los componentes sin stock
+        // Lógica para pintar de rojo los componentes sin stock
         if (nombrePestana === 'Componentes') {
             const precioPack = (fila['Precio_Pack'] || '').toLowerCase();
             if (precioPack.includes('sin stock') || precioPack.includes('no disponible')) {
@@ -124,14 +124,13 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
             }
         }
         
-        // MODIFICADO: Evaluar también esSinStock para aplicar la clase row-danger
         let claseFila = (esAlerta === 'critico' || esSinStock) ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
         
         htmlBody += `<tr ${claseFila}>`;
         visibleHeaders.forEach(header => {
             let cellContent = fila[header] || '';
 
-            // NUEVO: Agregar entre paréntesis los kits que lo usan, al lado del ID_Componente
+            // Agregar entre paréntesis los kits que lo usan, al lado del ID_Componente
             if (nombrePestana === 'Componentes' && header === 'ID_Componente' && fila['Kits_que_lo_usan']) {
                 cellContent += ` <small style="color: var(--text-secondary); font-size: 10px;">(${fila['Kits_que_lo_usan']})</small>`;
             }
@@ -224,20 +223,26 @@ function renderVariantesAgrupadas(datos) {
     for (const [idComponente, variantes] of Object.entries(componentes)) {
         htmlTotal += `<div class="kit-card">`;
         
+        // NUEVO: Extraer la info de los kits (todas las variantes del mismo componente comparten esta info)
+        const kitsUsados = variantes[0]['Kits_que_lo_usan'] && variantes[0]['Kits_que_lo_usan'] !== 'Ninguno' 
+            ? ` <small style="color: var(--text-secondary); font-size: 12px;">(Kits: ${variantes[0]['Kits_que_lo_usan']})</small>` 
+            : '';
+
         // EL BOTÓN DESPLEGABLE (Reutilizamos clases CSS existentes)
         htmlTotal += `<div class="kit-toggle" onclick="this.classList.toggle('active'); this.nextElementSibling.classList.toggle('hidden');">`;
-        htmlTotal += `📦 ${idComponente} <span class="arrow">▶</span>`;
+        htmlTotal += `📦 ${idComponente} ${kitsUsados} <span class="arrow">▶</span>`;
         htmlTotal += `</div>`;
         
         // LA TABLA OCULTA
         htmlTotal += `<div class="kit-table-container hidden">`;
-        const headers = Object.keys(variantes[0]);
+        // MODIFICADO: Excluir la columna 'Kits_que_lo_usan' de la tabla interna para evitar redundancia
+        const headers = Object.keys(variantes[0]).filter(h => h !== 'Kits_que_lo_usan');
         htmlTotal += `<table><thead><tr>`;
         headers.forEach(h => { htmlTotal += `<th>${h}</th>`; });
         htmlTotal += `</tr></thead><tbody>`;
         
         variantes.forEach(variante => {
-            // NUEVO: Lógica para pintar de rojo las filas sin stock en las variantes
+            // Lógica para pintar de rojo las filas sin stock en las variantes
             const stock = parseInt(variante['Stock_Packs'] || '0', 10);
             let claseFila = stock === 0 ? 'class="row-danger"' : '';
 
