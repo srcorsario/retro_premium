@@ -226,7 +226,7 @@ function renderVariantesAgrupadas(datos) {
         
         // NUEVO: Extraer la info de los kits (todas las variantes del mismo componente comparten esta info)
         const kitsUsados = variantes[0]['Kits_que_lo_usan'] && variantes[0]['Kits_que_lo_usan'] !== 'Ninguno' 
-            ? ` <small style="color: var(--text-secondary); font-size: 12px;">(Kits: ${variantes[0]['Kits_que_lo_usan']})</small>` 
+            ? variantes[0]['Kits_que_lo_usan'] 
             : '';
 
         // NUEVO: Comprobar si TODAS las variantes de este componente tienen 0 stock
@@ -235,7 +235,16 @@ function renderVariantesAgrupadas(datos) {
 
         // EL BOTÓN DESPLEGABLE (Reutilizamos clases CSS existentes)
         htmlTotal += `<div class="kit-toggle" onclick="this.classList.toggle('active'); this.nextElementSibling.classList.toggle('hidden');">`;
-        htmlTotal += `📦 <span ${colorNombre}>${idComponente}</span> ${kitsUsados} <span class="arrow">▶</span>`;
+        
+        // MODIFICADO: Estructura en grid para alinear Componente y Kits
+        htmlTotal += `<div class="kit-info-wrapper">`;
+        htmlTotal += `<span class="comp-name" ${colorNombre}>📦 ${idComponente}</span>`;
+        if (kitsUsados) {
+            htmlTotal += `<small class="kits-used">(Kits: ${kitsUsados})</small>`;
+        }
+        htmlTotal += `</div>`; // Fin de kit-info-wrapper
+        
+        htmlTotal += `<span class="arrow">▶</span>`;
         htmlTotal += `</div>`;
         
         // LA TABLA OCULTA
