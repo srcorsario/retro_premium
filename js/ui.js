@@ -219,7 +219,27 @@ function renderVariantesAgrupadas(datos) {
         componentes[idComponente].push(fila);
     });
 
-    let htmlTotal = '<div class="family-group">'; // Reutilizamos el contenedor visual
+    // NUEVO: Calcular dinámicamente el ancho de la columna del componente basado en el texto más largo
+    let longestId = '';
+    for (const id in componentes) {
+        if (id.length > longestId.length) {
+            longestId = id;
+        }
+    }
+    
+    let colWidthPx = 'max-content';
+    if (longestId) {
+        // Usar canvas para medir el texto exacto sin necesidad de inyectarlo en el DOM
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        context.font = "1.1rem system-ui, -apple-system, sans-serif"; // Mismo font que .kit-toggle
+        const textToMeasure = `📦 ${longestId}`;
+        const width = context.measureText(textToMeasure).width;
+        colWidthPx = `${Math.ceil(width) + 5}px`; // +5px de margen mínimo
+    }
+
+    // NUEVO: Inyectar la variable CSS en el contenedor principal
+    let htmlTotal = `<div class="family-group" style="--comp-col-width: ${colWidthPx};">`; 
     
     for (const [idComponente, variantes] of Object.entries(componentes)) {
         htmlTotal += `<div class="kit-card">`;
