@@ -6,9 +6,9 @@ import { renderTabla, mostrarMensaje } from './ui.js';
 // Variable para saber qué pestaña estamos viendo
 let vistaActual = 'Componentes';
 
-// NUEVO: Función para cruzar datos de Componentes con Kits y calcular dónde se usa cada uno
-function calcularKitsPorComponente(componentes, kits) {
-    if (!componentes || !kits) return componentes;
+// NUEVO: Función genérica para cruzar datos de cualquier tabla con Kits y calcular dónde se usa cada componente
+function calcularKitsPorComponente(datos, kits) {
+    if (!datos || !kits) return datos;
 
     const mapaKits = {};
     
@@ -22,15 +22,14 @@ function calcularKitsPorComponente(componentes, kits) {
         }
     });
 
-    // Inyectamos la información en el array de componentes
-    return componentes.map(comp => {
-        const idComp = comp['ID_Componente'];
-        // Si el componente está en algún kit, lo unimos con comas. Si no, "Ninguno".
-        const kitsUsados = mapaKits[idComp] ? Array.from(mapaKits[idComp]).join(', ') : 'Ninguno';
+    // Inyectamos la información en el array de datos (ya sean Componentes o Variantes)
+    return datos.map(item => {
+        const idComp = item['ID_Componente'];
+        if (!idComp) return item; // Si la fila no tiene ID_Componente, la devolvemos tal cual
         
-        // Rellenamos la columna 'Kits_que_lo_usan' que ya existe en tu Google Sheet pero está vacía
-        comp['Kits_que_lo_usan'] = kitsUsados;
-        return comp;
+        const kitsUsados = mapaKits[idComp] ? Array.from(mapaKits[idComp]).join(', ') : 'Ninguno';
+        item['Kits_que_lo_usan'] = kitsUsados;
+        return item;
     });
 }
 
@@ -47,8 +46,8 @@ async function cargarVista(nombrePestana) {
     // Obtener datos de nuestra API (CSV)
     let datos = await obtenerDatos(nombrePestana);
     
-    // NUEVO: Si es la pestaña de Componentes, enriquecemos los datos cruzándolos con Kits_Consolas
-    if (nombrePestana === 'Componentes') {
+    // MODIFICADO: Aplicar cruce de datos a Componentes y pestañas de Variantes
+    if (nombrePestana === 'Componentes' || nombrePestana === 'Variantes_LCSC' || nombrePestana === 'Variantes_AliExpress') {
         const datosKits = await obtenerDatos('Kits_Consolas');
         datos = calcularKitsPorComponente(datos, datosKits);
     }
