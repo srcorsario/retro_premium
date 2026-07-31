@@ -112,12 +112,20 @@ td {
 /* NUEVO: Contenedor para alinear el componente y sus kits */
 .kit-info-wrapper {
     display: grid;
-    grid-template-columns: max-content 1fr; /* Col 1: Componente, Col 2: Kits (resto del espacio) */
+    /* MODIFICADO: Usamos una variable CSS para fijar el ancho de la primera columna dinámicamente */
+    grid-template-columns: var(--comp-col-width, max-content) 1fr; 
     align-items: baseline;
     column-gap: 20px; /* Separación entre la columna del componente y la de kits */
     row-gap: 5px;
     flex: 1; /* Ocupa todo el espacio disponible antes de la flecha */
     min-width: 0; /* Previene que el grid se desborde */
+}
+
+/* NUEVO: Clase para el nombre del componente, evita que se rompa */
+.comp-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* NUEVO: Estilo para el texto de los kits */
