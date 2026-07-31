@@ -98,14 +98,14 @@ async function verificarStock() {
     }
 }
 
+// MODIFICADO: Cambio a recarga manual con botón
 async function sincronizarLCSC() {
-    mostrarMensaje('msg-pedidos', '🔄 Sincronizando LCSC en Google Sheets...', false);
+    mostrarMensaje('msg-pedidos', '🔄 Enviando orden de sincronización a Google Sheets...', false);
     const exito = await actualizarDatos({ action: 'sync_lcsc' });
     if (exito) {
-        mostrarMensaje('msg-pedidos', '✅ Sincronización LCSC completada. Actualizando vista...', false);
-        setTimeout(() => location.reload(), 3000); // Damos 3 segundos para que Google procese
+        mostrarMensaje('msg-pedidos', '✅ <strong>Orden recibida.</strong> Google está actualizando la hoja en segundo plano.<br>Cuando veas que ha terminado en tu Google Sheet, pulsa el botón para cargar los datos nuevos.<br><br><button class="btn" onclick="location.reload()" style="margin-top:10px;">🔄 Refrescar Vista</button>', false);
     } else {
-        mostrarMensaje('msg-pedidos', '❌ Error al sincronizar LCSC.', true);
+        mostrarMensaje('msg-pedidos', '❌ Error al enviar la orden de sincronización.', true);
     }
 }
 
@@ -113,7 +113,6 @@ async function abrirModalAliExpress() {
     const modal = document.getElementById('modal-aliexpress');
     const selectComp = document.getElementById('ali-id-componente');
     if (modal && selectComp) {
-        // Cargar componentes si el select está vacío
         if (selectComp.options.length === 0) {
             const datosComp = await obtenerDatos('Componentes');
             datosComp.forEach(c => {
@@ -134,6 +133,7 @@ function cerrarModalAliExpress() {
     if (modal) modal.style.display = 'none';
 }
 
+// MODIFICADO: Cambio a recarga manual con botón
 async function enviarDatosAliExpress() {
     const idComp = document.getElementById('ali-id-componente').value;
     const uds = document.getElementById('ali-uds-pack').value;
@@ -146,7 +146,7 @@ async function enviarDatosAliExpress() {
     }
 
     cerrarModalAliExpress();
-    mostrarMensaje('msg-pedidos', '🔄 Guardando variante en Google Sheets...', false);
+    mostrarMensaje('msg-pedidos', '🔄 Enviando variante a Google Sheets...', false);
 
     const exito = await actualizarDatos({ 
         action: 'update_aliexpress_manual', 
@@ -157,8 +157,7 @@ async function enviarDatosAliExpress() {
     });
     
     if (exito) {
-        mostrarMensaje('msg-pedidos', '✅ Variante guardada. Recargando vista...', false);
-        setTimeout(() => location.reload(), 2000);
+        mostrarMensaje('msg-pedidos', '✅ <strong>Variante guardada correctamente.</strong><br>Pulsa el botón para recargar los datos en la pantalla.<br><br><button class="btn" onclick="location.reload()" style="margin-top:10px;">🔄 Refrescar Vista</button>', false);
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
     }
