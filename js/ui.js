@@ -1,6 +1,9 @@
 // js/ui.js
 import ENV from './config.js';
 
+// NUEVO: Clave para guardar la configuración de columnas en LocalStorage
+const LS_COL_VISIBILITY = 'retro_premium_col_visibility';
+
 export function renderTabla(contenedorID, datos, nombrePestana) {
     const container = document.getElementById(contenedorID);
     // MODIFICADO: Manejo defensivo del DOM
@@ -25,7 +28,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         return;
     }
 
-    // NUEVO: Si es la pestaña de Variantes LCSC o AliExpress, agrupamos por componente
+    // Si es la pestaña de Variantes LCSC o AliExpress, agrupamos por componente
     if (nombrePestana === 'Variantes_LCSC' || nombrePestana === 'Variantes_AliExpress') {
         container.innerHTML = renderVariantesAgrupadas(datosLimpios);
         const tituloVista = document.getElementById('titulo-vista');
@@ -34,12 +37,73 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     }
 
     // --- CÓDIGO NORMAL PARA EL RESTO DE PESTAÑAS ---
-    const headers = Object.keys(datosLimpios[0]);
+    const allHeaders = Object.keys(datosLimpios[0]);
+    let visibleHeaders = allHeaders;
+
+    // NUEVO: Lógica de visibilidad de columnas exclusiva para "Componentes"
+    if (nombrePestana === 'Componentes') {
+        // Leer de LocalStorage qué columnas estamos ocultando
+        let hiddenCols = [];
+        const savedCols = localStorage.getItem(LS_COL_VISIBILITY);
+        if (savedCols) {
+            try {
+                hiddenCols = JSON.parse(savedCols);
+            } catch (e) {
+                hiddenCols = [];
+            }
+        }
+        
+        visibleHeaders = allHeaders.filter(h => !hiddenCols.includes(h));
+
+        // Inyectar los Toggles antes de la tabla
+        let toggleHtml = '<div class="col-toggle-container">';
+        allHeaders.forEach(h => {
+            const isChecked = visibleHeaders.includes(h);
+            toggleHtml += `
+                <label class="col-toggle-item">
+                    <input type="checkbox" data-col="${h}" ${isChecked ? 'checked' : ''}>
+                    ${h}
+                </label>`;
+        });
+        toggleHtml += '</div>';
+
+        // Pintar toggles
+        container.innerHTML = toggleHtml;
+
+        // Listeners para los checkboxes (Norma 10: control de listeners)
+        const checkboxes = container.querySelectorAll('.col-toggle-item input[type="checkbox"]');
+        checkboxes.forEach(chk => {
+            chk.addEventListener('change', (e) => {
+                const colName = e.target.getAttribute('data-col');
+                let currentHidden = [];
+                const currentSaved = localStorage.getItem(LS_COL_VISIBILITY);
+                if (currentSaved) {
+                    try { currentHidden = JSON.parse(currentSaved); } catch(err) {}
+                }
+
+                if (e.target.checked) {
+                    // Si se marca, lo quitamos de ocultos
+                    currentHidden = currentHidden.filter(c => c !== colName);
+                } else {
+                    // Si se desmarca, lo añadimos a ocultos
+                    if (!currentHidden.includes(colName)) currentHidden.push(colName);
+                }
+
+                localStorage.setItem(LS_COL_VISIBILITY, JSON.stringify(currentHidden));
+                
+                // Re-renderizar inmediatamente con los mismos datos para reflejar el cambio
+                renderTabla(contenedorID, datos, nombrePestana);
+            });
+        });
+    }
+
     let htmlHead = '<tr>';
-    headers.forEach(h => { htmlHead += `<th>${h}</th>`; });
+    visibleHeaders.forEach(h => { htmlHead += `<th>${h}</th>`; }); // MODIFICADO: Usar visibleHeaders
     htmlHead += '</tr>';
 
     let htmlBody = '';
+    let tableHtml = '';
+
     datosLimpios.forEach(fila => {
         let esAlerta = false;
         
@@ -54,18 +118,25 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         let claseFila = esAlerta === 'critico' ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
         
         htmlBody += `<tr ${claseFila}>`;
-        headers.forEach(header => {
+        visibleHeaders.forEach(header => { // MODIFICADO: Usar visibleHeaders
             htmlBody += `<td title="${fila[header] || ''}">${fila[header] || ''}</td>`; // Añadido title para ver URL completa al pasar el ratón
         });
         htmlBody += '</tr>';
     });
 
-    container.innerHTML = `
+    tableHtml = `
         <table>
             <thead>${htmlHead}</thead>
             <tbody>${htmlBody}</tbody>
         </table>
     `;
+
+    // NUEVO: Añadir la tabla respetando si ya inyectamos los toggles en "Componentes"
+    if (nombrePestana === 'Componentes') {
+        container.insertAdjacentHTML('beforeend', tableHtml);
+    } else {
+        container.innerHTML = tableHtml;
+    }
 }
 
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
@@ -119,7 +190,7 @@ function renderKitsAgrupados(datos) {
     return htmlTotal;
 }
 
-// NUEVO: --- LA FUNCIÓN QUE AGRUPA VARIANTES POR COMPONENTE (ACORDEÓN) ---
+// --- LA FUNCIÓN QUE AGRUPA VARIANTES POR COMPONENTE (ACORDEÓN) ---
 function renderVariantesAgrupadas(datos) {
     const componentes = {};
     
