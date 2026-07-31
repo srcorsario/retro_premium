@@ -63,7 +63,8 @@ td {
    ALERTAS DE STOCK
    ========================================= */
 .row-warning { background-color: rgba(234, 179, 8, 0.15); }
-.row-danger { background-color: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+/* MODIFICADO: Color de letra rojo intenso para artículos sin stock */
+.row-danger { background-color: rgba(239, 68, 68, 0.2); color: #ef4444; }
 
 /* =========================================
    DISEÑO ACORDEÓN PARA FAMILIAS Y KITS
@@ -131,7 +132,7 @@ td {
 }
 
 /* =========================================
-   NUEVO: SELECTOR DE COLUMNAS (TOGGLES)
+   SELECTOR DE COLUMNAS (TOGGLES)
    ========================================= */
 .col-toggle-container {
     display: flex;
