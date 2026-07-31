@@ -25,6 +25,14 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         return;
     }
 
+    // NUEVO: Si es la pestaña de Variantes LCSC o AliExpress, agrupamos por componente
+    if (nombrePestana === 'Variantes_LCSC' || nombrePestana === 'Variantes_AliExpress') {
+        container.innerHTML = renderVariantesAgrupadas(datosLimpios);
+        const tituloVista = document.getElementById('titulo-vista');
+        if (tituloVista) tituloVista.innerText = `${nombrePestana} (${datosLimpios.length} registros)`;
+        return;
+    }
+
     // --- CÓDIGO NORMAL PARA EL RESTO DE PESTAÑAS ---
     const headers = Object.keys(datosLimpios[0]);
     let htmlHead = '<tr>';
@@ -107,6 +115,50 @@ function renderKitsAgrupados(datos) {
         }
         htmlTotal += `</div>`; 
     }
+    
+    return htmlTotal;
+}
+
+// NUEVO: --- LA FUNCIÓN QUE AGRUPA VARIANTES POR COMPONENTE (ACORDEÓN) ---
+function renderVariantesAgrupadas(datos) {
+    const componentes = {};
+    
+    // Agrupamos todas las filas que pertenezcan al mismo ID_Componente
+    datos.forEach(fila => {
+        const idComponente = fila['ID_Componente'] || 'Componente Desconocido';
+        
+        if (!componentes[idComponente]) componentes[idComponente] = [];
+        componentes[idComponente].push(fila);
+    });
+
+    let htmlTotal = '<div class="family-group">'; // Reutilizamos el contenedor visual
+    
+    for (const [idComponente, variantes] of Object.entries(componentes)) {
+        htmlTotal += `<div class="kit-card">`;
+        
+        // EL BOTÓN DESPLEGABLE (Reutilizamos clases CSS existentes)
+        htmlTotal += `<div class="kit-toggle" onclick="this.classList.toggle('active'); this.nextElementSibling.classList.toggle('hidden');">`;
+        htmlTotal += `📦 ${idComponente} <span class="arrow">▶</span>`;
+        htmlTotal += `</div>`;
+        
+        // LA TABLA OCULTA
+        htmlTotal += `<div class="kit-table-container hidden">`;
+        const headers = Object.keys(variantes[0]);
+        htmlTotal += `<table><thead><tr>`;
+        headers.forEach(h => { htmlTotal += `<th>${h}</th>`; });
+        htmlTotal += `</tr></thead><tbody>`;
+        
+        variantes.forEach(variante => {
+            htmlTotal += `<tr>`;
+            headers.forEach(h => { 
+                htmlTotal += `<td title="${variante[h] || ''}">${variante[h] || ''}</td>`; 
+            });
+            htmlTotal += `</tr>`;
+        });
+        
+        htmlTotal += `</tbody></table></div></div>`; 
+    }
+    htmlTotal += `</div>`; 
     
     return htmlTotal;
 }
