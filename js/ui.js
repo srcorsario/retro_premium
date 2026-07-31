@@ -247,8 +247,13 @@ function renderVariantesAgrupadas(datos) {
         htmlTotal += `</tr></thead><tbody>`;
         
         variantes.forEach(variante => {
-            // MODIFICADO: Se elimina la clase row-danger para no pintar toda la fila, solo el título
-            htmlTotal += `<tr>`;
+            // NUEVO: Lógica para pintar de rojo si el tamaño del pack supera al stock disponible
+            const stock = parseInt(variante['Stock_Packs'] || '0', 10);
+            const pack = parseInt(variante['Variacion_Pack'] || '0', 10);
+            const sinStockSuficiente = (stock > 0 && pack > stock);
+            let claseFila = sinStockSuficiente ? 'class="row-danger"' : '';
+
+            htmlTotal += `<tr ${claseFila}>`;
             headers.forEach(h => { 
                 htmlTotal += `<td title="${variante[h] || ''}">${variante[h] || ''}</td>`; 
             });
@@ -266,7 +271,8 @@ export function mostrarMensaje(elementoID, texto, esError = false) {
     const el = document.getElementById(elementoID);
     // Manejo defensivo del DOM
     if (el) {
-        el.innerText = texto;
+        // MODIFICADO: Cambiado a innerHTML para permitir saltos de línea (<br>) en los reportes de stock
+        el.innerHTML = texto;
         el.style.color = esError ? 'var(--danger)' : 'var(--success)';
     }
 }
