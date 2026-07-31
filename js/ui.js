@@ -3,6 +3,8 @@ import ENV from './config.js';
 
 export function renderTabla(contenedorID, datos, nombrePestana) {
     const container = document.getElementById(contenedorID);
+    // MODIFICADO: Manejo defensivo del DOM
+    if (!container) return;
     
     if (!datos || datos.length === 0) {
         container.innerHTML = `<p style="text-align:center; color:var(--text-secondary);">No hay datos para mostrar en ${nombrePestana}.</p>`;
@@ -17,7 +19,9 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     // Si es la pestaña de Kits, usamos la lógica del acordeón
     if (nombrePestana === 'Kits_Consolas') {
         container.innerHTML = renderKitsAgrupados(datosLimpios);
-        document.getElementById('titulo-vista').innerText = `Kits y Placas Disponibles`;
+        // MODIFICADO: Manejo defensivo del DOM
+        const tituloVista = document.getElementById('titulo-vista');
+        if (tituloVista) tituloVista.innerText = `Kits y Placas Disponibles`;
         return;
     }
 
@@ -109,6 +113,7 @@ function renderKitsAgrupados(datos) {
 
 export function mostrarMensaje(elementoID, texto, esError = false) {
     const el = document.getElementById(elementoID);
+    // MODIFICADO: Manejo defensivo del DOM
     if (el) {
         el.innerText = texto;
         el.style.color = esError ? 'var(--danger)' : 'var(--success)';
