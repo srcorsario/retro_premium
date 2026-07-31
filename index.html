@@ -20,7 +20,6 @@
             <button class="tab-btn" data-sheet="Stock_Almacen">Stock Físico</button>
             <button class="tab-btn" data-sheet="Kits_Consolas">Kits</button>
             <button class="tab-btn" data-sheet="Variantes_LCSC">LCSC Precios</button>
-            <!-- NUEVO: Añadido botón para visualizar los precios de AliExpress -->
             <button class="tab-btn" data-sheet="Variantes_AliExpress">AliExpress Precios</button>
             <button class="tab-btn" data-sheet="Gastos_Extra">Gastos</button>
         </div>
@@ -34,14 +33,26 @@
             </div>
         </div>
 
-        <!-- TARJETA SECUNDARIA (PREPARADA PARA EL FUTURO MÓDULO DE PEDIDOS) -->
+        <!-- TARJETA SECUNDARIA (MÓDULO DE PEDIDOS) -->
         <div class="card" style="margin-top: 20px;">
             <h2>🛠️ Módulo de Preparación de Pedidos</h2>
-            <p style="color: var(--text-secondary); font-size: 14px;">Aquí irá la calculadora de kits (SNES, GameCube) y el botón para descontar stock del almacén.</p>
+            <p style="color: var(--text-secondary); font-size: 14px;">Selecciona un kit para verificar si tenemos el stock físico necesario en almacén.</p>
             
-            <!-- Este botón lo conectaremos en el siguiente paso -->
-            <button id="btn-simular-pedido" class="btn" disabled>Calcular Pedido (En desarrollo)</button>
-            <p id="msg-pedidos"></p>
+            <!-- Selector de Kit y Botón de Verificación -->
+            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
+                <select id="select-kit" style="padding: 10px; border-radius: 4px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); flex-grow: 1;">
+                    <option value="">Cargando kits...</option>
+                </select>
+                <button id="btn-verificar-stock" class="btn">Verificar Stock Físico</button>
+            </div>
+
+            <!-- NUEVO: Sección de sincronización con proveedores -->
+            <div style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                <p style="color: var(--text-secondary); font-size: 14px;">Sincroniza los precios y stock en tiempo real desde LCSC y AliExpress (requiere backend Apps Script).</p>
+                <button id="btn-sync-proveedores" class="btn" style="background: var(--success);">Sincronizar Stock Proveedores</button>
+            </div>
+            
+            <div id="msg-pedidos" style="font-size: 14px; line-height: 1.5; margin-top: 15px;"></div>
         </div>
     </div>
 
