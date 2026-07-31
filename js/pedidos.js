@@ -98,12 +98,16 @@ async function verificarStock() {
     }
 }
 
-// MODIFICADO: Cambio a recarga manual con botón
+// MODIFICADO: Usamos confirm() para un pop-up limpio con recarga directa
 async function sincronizarLCSC() {
     mostrarMensaje('msg-pedidos', '🔄 Enviando orden de sincronización a Google Sheets...', false);
     const exito = await actualizarDatos({ action: 'sync_lcsc' });
     if (exito) {
-        mostrarMensaje('msg-pedidos', '✅ <strong>Orden recibida.</strong> Google está actualizando la hoja en segundo plano.<br>Cuando veas que ha terminado en tu Google Sheet, pulsa el botón para cargar los datos nuevos.<br><br><button class="btn" onclick="location.reload()" style="margin-top:10px;">🔄 Refrescar Vista</button>', false);
+        if (confirm("✅ ¡Orden recibida!\n\nGoogle está actualizando la hoja en segundo plano.\n\nPulsa Aceptar para refrescar la web cuando veas que ha terminado en tu Google Sheet.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '⏳ Sincronización en proceso. Refresca la web manualmente cuando quieras.', false);
+        }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al enviar la orden de sincronización.', true);
     }
@@ -133,7 +137,7 @@ function cerrarModalAliExpress() {
     if (modal) modal.style.display = 'none';
 }
 
-// MODIFICADO: Cambio a recarga manual con botón
+// MODIFICADO: Usamos confirm() para un pop-up limpio con recarga directa
 async function enviarDatosAliExpress() {
     const idComp = document.getElementById('ali-id-componente').value;
     const uds = document.getElementById('ali-uds-pack').value;
@@ -157,7 +161,11 @@ async function enviarDatosAliExpress() {
     });
     
     if (exito) {
-        mostrarMensaje('msg-pedidos', '✅ <strong>Variante guardada correctamente.</strong><br>Pulsa el botón para recargar los datos en la pantalla.<br><br><button class="btn" onclick="location.reload()" style="margin-top:10px;">🔄 Refrescar Vista</button>', false);
+        if (confirm("✅ ¡Variante guardada correctamente!\n\nPulsa Aceptar para refrescar la web y ver los cambios.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '✅ Variante guardada. Refresca la web cuando quieras.', false);
+        }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
     }
