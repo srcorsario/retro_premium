@@ -129,3 +129,43 @@ td {
 .kit-table-container.hidden {
     display: none;
 }
+
+/* =========================================
+   NUEVO: SELECTOR DE COLUMNAS (TOGGLES)
+   ========================================= */
+.col-toggle-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-color);
+}
+
+.col-toggle-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    background: var(--card-bg);
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    transition: background 0.2s, border-color 0.2s;
+    color: var(--text-secondary);
+}
+
+.col-toggle-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--primary);
+    color: var(--text-main);
+}
+
+.col-toggle-item input {
+    cursor: pointer;
+    accent-color: var(--primary);
+}
