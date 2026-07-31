@@ -106,7 +106,6 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
 
     datosLimpios.forEach(fila => {
         let esAlerta = false;
-        let esSinStock = false; 
         
         // Lógica de negocio visual: Si estamos en Stock y las unidades son <= mínimas
         if (nombrePestana === 'Stock_Almacen') {
@@ -115,24 +114,26 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
             if (uds <= min && uds > 0) esAlerta = true;
             if (uds === 0) esAlerta = 'critico';
         }
-
-        // Lógica para pintar de rojo los componentes sin stock
-        if (nombrePestana === 'Componentes') {
-            const precioPack = (fila['Precio_Pack'] || '').toLowerCase();
-            if (precioPack.includes('sin stock') || precioPack.includes('no disponible')) {
-                esSinStock = true;
-            }
-        }
         
-        let claseFila = (esAlerta === 'critico' || esSinStock) ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
+        // MODIFICADO: Se elimina esSinStock de la clase de la fila para pintar solo el texto
+        let claseFila = esAlerta === 'critico' ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
         
         htmlBody += `<tr ${claseFila}>`;
         visibleHeaders.forEach(header => {
             let cellContent = fila[header] || '';
 
             // Agregar entre paréntesis los kits que lo usan, al lado del ID_Componente
-            if (nombrePestana === 'Componentes' && header === 'ID_Componente' && fila['Kits_que_lo_usan']) {
-                cellContent += ` <small style="color: var(--text-secondary); font-size: 10px;">(${fila['Kits_que_lo_usan']})</small>`;
+            if (nombrePestana === 'Componentes' && header === 'ID_Componente') {
+                // NUEVO: Detectar si el componente está sin stock para pintar el nombre en rojo
+                const precioPack = (fila['Precio_Pack'] || '').toLowerCase();
+                const esSinStock = precioPack.includes('sin stock') || precioPack.includes('no disponible');
+                const estiloNombre = esSinStock ? 'style="color: #ef4444; font-weight: bold;"' : '';
+                
+                cellContent = `<span ${estiloNombre}>${cellContent}</span>`;
+                
+                if (fila['Kits_que_lo_usan']) {
+                    cellContent += ` <small style="color: var(--text-secondary); font-size: 10px;">(${fila['Kits_que_lo_usan']})</small>`;
+                }
             }
 
             htmlBody += `<td title="${fila[header] || ''}">${cellContent}</td>`; // Añadido title para ver URL completa al pasar el ratón
@@ -228,9 +229,13 @@ function renderVariantesAgrupadas(datos) {
             ? ` <small style="color: var(--text-secondary); font-size: 12px;">(Kits: ${variantes[0]['Kits_que_lo_usan']})</small>` 
             : '';
 
+        // NUEVO: Comprobar si TODAS las variantes de este componente tienen 0 stock
+        const todoSinStock = variantes.every(v => parseInt(v['Stock_Packs'] || '0', 10) === 0);
+        const colorNombre = todoSinStock ? 'style="color: #ef4444; font-weight: bold;"' : '';
+
         // EL BOTÓN DESPLEGABLE (Reutilizamos clases CSS existentes)
         htmlTotal += `<div class="kit-toggle" onclick="this.classList.toggle('active'); this.nextElementSibling.classList.toggle('hidden');">`;
-        htmlTotal += `📦 ${idComponente} ${kitsUsados} <span class="arrow">▶</span>`;
+        htmlTotal += `📦 <span ${colorNombre}>${idComponente}</span> ${kitsUsados} <span class="arrow">▶</span>`;
         htmlTotal += `</div>`;
         
         // LA TABLA OCULTA
@@ -242,11 +247,8 @@ function renderVariantesAgrupadas(datos) {
         htmlTotal += `</tr></thead><tbody>`;
         
         variantes.forEach(variante => {
-            // Lógica para pintar de rojo las filas sin stock en las variantes
-            const stock = parseInt(variante['Stock_Packs'] || '0', 10);
-            let claseFila = stock === 0 ? 'class="row-danger"' : '';
-
-            htmlTotal += `<tr ${claseFila}>`;
+            // MODIFICADO: Se elimina la clase row-danger para no pintar toda la fila, solo el título
+            htmlTotal += `<tr>`;
             headers.forEach(h => { 
                 htmlTotal += `<td title="${variante[h] || ''}">${variante[h] || ''}</td>`; 
             });
