@@ -23,6 +23,7 @@ function calcularKitsPorComponente(datos, kits) {
     });
 
     // Inyectamos la información en el array de datos (ya sean Componentes o Variantes)
+    // MODIFICADO: Añadido .sort() para ordenar por uso de kits (GameCube, SNES, etc.)
     return datos.map(item => {
         const idComp = item['ID_Componente'];
         if (!idComp) return item; // Si la fila no tiene ID_Componente, la devolvemos tal cual
@@ -30,6 +31,14 @@ function calcularKitsPorComponente(datos, kits) {
         const kitsUsados = mapaKits[idComp] ? Array.from(mapaKits[idComp]).join(', ') : 'Ninguno';
         item['Kits_que_lo_usan'] = kitsUsados;
         return item;
+    }).sort((a, b) => {
+        const kitA = a['Kits_que_lo_usan'] || 'Ninguno';
+        const kitB = b['Kits_que_lo_usan'] || 'Ninguno';
+        // Los que no tienen kit ("Ninguno") se van al final
+        if (kitA === 'Ninguno' && kitB !== 'Ninguno') return 1;
+        if (kitA !== 'Ninguno' && kitB === 'Ninguno') return -1;
+        // Orden alfabético por el nombre de los kits
+        return kitA.localeCompare(kitB);
     });
 }
 
