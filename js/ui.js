@@ -27,8 +27,8 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         return;
     }
 
-    // Si es la pestaña de Variantes LCSC o AliExpress, agrupamos por componente
-    if (nombrePestana === 'Variantes_LCSC' || nombrePestana === 'Variantes_AliExpress') {
+    // Si es la pestaña de Variantes LCSC, AliExpress o TME, agrupamos por componente
+    if (nombrePestana === 'Variantes_LCSC' || nombrePestana === 'Variantes_AliExpress' || nombrePestana === 'Variantes_TME') {
         container.innerHTML = renderVariantesAgrupadas(datosLimpios);
         const tituloVista = document.getElementById('titulo-vista');
         if (tituloVista) tituloVista.innerText = `${nombrePestana} (${datosLimpios.length} registros)`;

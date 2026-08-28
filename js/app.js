@@ -48,7 +48,7 @@ async function cargarVista(nombrePestana) {
     
     let datos = await obtenerDatos(nombrePestana);
     
-    if (nombrePestana === 'Componentes' || nombrePestana === 'Variantes_LCSC' || nombrePestana === 'Variantes_AliExpress') {
+    if (nombrePestana === 'Componentes' || nombrePestana === 'Variantes_LCSC' || nombrePestana === 'Variantes_AliExpress' || nombrePestana === 'Variantes_TME') {
         const datosKits = await obtenerDatos('Kits_Consolas');
         datos = calcularKitsPorComponente(datos, datosKits);
     }

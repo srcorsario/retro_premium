@@ -15,8 +15,12 @@ export async function inicializarModuloPedidos() {
     const btnCancelAli = document.getElementById('btn-cancel-aliexpress');
     const btnSubmitAli = document.getElementById('btn-submit-aliexpress');
     const btnSyncKitsCol = document.getElementById('btn-sync-kits-col'); // NUEVO
-    
-    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncKitsCol) return;
+    const btnSyncTme = document.getElementById('btn-sync-tme'); // NUEVO
+    const btnCancelTme = document.getElementById('btn-cancel-tme'); // NUEVO
+    const btnSubmitTme = document.getElementById('btn-submit-tme'); // NUEVO
+    const btnSyncTmeAuto = document.getElementById('btn-sync-tme-auto'); // NUEVO
+
+    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncKitsCol || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnSyncTmeAuto) return;
 
     const datosKits = await obtenerDatos('Kits_Consolas');
     const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
@@ -35,7 +39,11 @@ export async function inicializarModuloPedidos() {
     btnCancelAli.addEventListener('click', cerrarModalAliExpress);
     btnSubmitAli.addEventListener('click', enviarDatosAliExpress);
     btnSyncKitsCol.addEventListener('click', sincronizarKitsUsados); // NUEVO
-    
+    btnSyncTme.addEventListener('click', abrirModalTME); // NUEVO
+    btnCancelTme.addEventListener('click', cerrarModalTME); // NUEVO
+    btnSubmitTme.addEventListener('click', enviarDatosTME); // NUEVO
+    btnSyncTmeAuto.addEventListener('click', sincronizarTME); // NUEVO
+
     pedidosInicializado = true;
 }
 
@@ -165,6 +173,79 @@ async function enviarDatosAliExpress() {
             location.reload();
         } else {
             mostrarMensaje('msg-pedidos', '✅ Variante guardada. Refresca la web cuando quieras.', false);
+        }
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
+    }
+}
+
+// --- NUEVO: MÓDULO TME (mismo patrón que AliExpress) ---
+// NUEVO: Sincronización automática de TME (equivalente a sincronizarLCSC)
+async function sincronizarTME() {
+    mostrarMensaje('msg-pedidos', '🔄 Enviando orden de sincronización TME a Google Sheets...', false);
+    const exito = await actualizarDatos({ action: 'sync_tme' });
+    if (exito) {
+        if (confirm("✅ ¡Orden recibida!\n\nGoogle está consultando la API de TME en segundo plano.\n\nPulsa Aceptar para refrescar la web cuando veas que ha terminado en tu Google Sheet.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '⏳ Sincronización TME en proceso. Refresca la web manualmente cuando quieras.', false);
+        }
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al enviar la orden de sincronización TME.', true);
+    }
+}
+
+async function abrirModalTME() {
+    const modal = document.getElementById('modal-tme');
+    const selectComp = document.getElementById('tme-id-componente');
+    if (modal && selectComp) {
+        if (selectComp.options.length === 0) {
+            const datosComp = await obtenerDatos('Componentes');
+            datosComp.forEach(c => {
+                if (c['ID_Componente']) {
+                    const opt = document.createElement('option');
+                    opt.value = c['ID_Componente'];
+                    opt.textContent = c['ID_Componente'];
+                    selectComp.appendChild(opt);
+                }
+            });
+        }
+        modal.style.display = 'flex';
+    }
+}
+
+function cerrarModalTME() {
+    const modal = document.getElementById('modal-tme');
+    if (modal) modal.style.display = 'none';
+}
+
+async function enviarDatosTME() {
+    const idComp = document.getElementById('tme-id-componente').value;
+    const uds = document.getElementById('tme-uds-pack').value;
+    const precio = document.getElementById('tme-precio-pack').value;
+    const stock = document.getElementById('tme-stock-packs').value;
+
+    if (!idComp || !precio || precio <= 0) {
+        mostrarMensaje('msg-pedidos', '❌ Faltan datos o el precio no es válido.', true);
+        return;
+    }
+
+    cerrarModalTME();
+    mostrarMensaje('msg-pedidos', '🔄 Enviando variante TME a Google Sheets...', false);
+
+    const exito = await actualizarDatos({
+        action: 'update_tme_manual',
+        idComponente: idComp,
+        udsPack: uds,
+        precioPack: precio,
+        stockPacks: stock
+    });
+
+    if (exito) {
+        if (confirm("✅ ¡Variante TME guardada correctamente!\n\nPulsa Aceptar para refrescar la web y ver los cambios.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '✅ Variante TME guardada. Refresca la web cuando quieras.', false);
         }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);

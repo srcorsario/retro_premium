@@ -20,6 +20,7 @@
             <button class="tab-btn" data-sheet="Kits_Consolas">Kits</button>
             <button class="tab-btn" data-sheet="Variantes_LCSC">LCSC Precios</button>
             <button class="tab-btn" data-sheet="Variantes_AliExpress">AliExpress Precios</button>
+            <button class="tab-btn" data-sheet="Variantes_TME">TME Precios</button>
             <button class="tab-btn" data-sheet="Gastos_Extra">Gastos</button>
         </div>
 
@@ -48,6 +49,8 @@
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                     <button id="btn-sync-lcsc" class="btn" style="background: var(--success);">Sincronizar LCSC (Auto)</button>
                     <button id="btn-sync-aliexpress" class="btn" style="background: var(--primary);">Añadir Variante AliExpress (Manual)</button>
+                    <button id="btn-sync-tme-auto" class="btn" style="background: var(--tme-color);">Sincronizar TME (Auto)</button>
+                    <button id="btn-sync-tme" class="btn" style="background: var(--tme-color); opacity: 0.75;">Añadir Variante TME (Manual)</button>
                     <!-- NUEVO: Botón para sincronizar la columna R -->
                     <button id="btn-sync-kits-col" class="btn" style="background: var(--text-secondary);">Sincronizar Col Kits (Sheets)</button>
                 </div>
@@ -82,6 +85,35 @@
             <div class="modal-actions">
                 <button id="btn-cancel-aliexpress" class="btn" style="background: var(--danger);">Cancelar</button>
                 <button id="btn-submit-aliexpress" class="btn" style="background: var(--success);">Guardar Variante</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL TME -->
+    <div id="modal-tme" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <h3>Añadir Variante TME</h3>
+            <div style="margin-bottom: 15px;">
+                <label for="tme-id-componente" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">ID Componente:</label>
+                <select id="tme-id-componente" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;"></select>
+            </div>
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <div style="flex: 1;">
+                    <label for="tme-uds-pack" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Uds por Pack:</label>
+                    <input type="number" id="tme-uds-pack" value="1" min="1" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                </div>
+                <div style="flex: 1;">
+                    <label for="tme-precio-pack" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Precio Pack (€):</label>
+                    <input type="number" id="tme-precio-pack" step="0.01" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                </div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="tme-stock-packs" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Stock Disponible:</label>
+                <input type="number" id="tme-stock-packs" value="100" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+            </div>
+            <div class="modal-actions">
+                <button id="btn-cancel-tme" class="btn" style="background: var(--danger);">Cancelar</button>
+                <button id="btn-submit-tme" class="btn" style="background: var(--tme-color);">Guardar Variante</button>
             </div>
         </div>
     </div>
