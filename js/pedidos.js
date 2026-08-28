@@ -19,8 +19,9 @@ export async function inicializarModuloPedidos() {
     const btnCancelTme = document.getElementById('btn-cancel-tme'); // NUEVO
     const btnSubmitTme = document.getElementById('btn-submit-tme'); // NUEVO
     const btnSyncTmeAuto = document.getElementById('btn-sync-tme-auto'); // NUEVO
+    const btnSyncProveedoresKits = document.getElementById('btn-sync-proveedores-kits'); // NUEVO
 
-    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncKitsCol || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnSyncTmeAuto) return;
+    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncKitsCol || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnSyncTmeAuto || !btnSyncProveedoresKits) return;
 
     const datosKits = await obtenerDatos('Kits_Consolas');
     const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
@@ -43,6 +44,7 @@ export async function inicializarModuloPedidos() {
     btnCancelTme.addEventListener('click', cerrarModalTME); // NUEVO
     btnSubmitTme.addEventListener('click', enviarDatosTME); // NUEVO
     btnSyncTmeAuto.addEventListener('click', sincronizarTME); // NUEVO
+    btnSyncProveedoresKits.addEventListener('click', sincronizarProveedoresKits); // NUEVO
 
     pedidosInicializado = true;
 }
@@ -249,6 +251,22 @@ async function enviarDatosTME() {
         }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
+    }
+}
+
+// NUEVA FUNCIÓN: Envía la orden a Google Sheets para rellenar la columna L de Kits_Consolas
+// (qué proveedores tienen cada componente y si tienen stock, para pintarlo en rojo/normal en la web)
+async function sincronizarProveedoresKits() {
+    mostrarMensaje('msg-pedidos', '🔄 Actualizando columna "Proveedores_Disponibles" en Google Sheets...', false);
+    const exito = await actualizarDatos({ action: 'sync_proveedores_kits' });
+    if (exito) {
+        if (confirm("✅ ¡Columna de Proveedores actualizada en Google Sheets!\n\nPulsa Aceptar para refrescar la web.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '✅ Columna actualizada. Refresca la web cuando quieras.', false);
+        }
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al actualizar la columna en Google Sheets.', true);
     }
 }
 

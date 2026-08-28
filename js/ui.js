@@ -156,6 +156,23 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
     }
 }
 
+// NUEVO: La columna "Proveedores_Disponibles" (rellenada desde Apps Script) llega como texto
+// plano tipo "LCSC / ❌TME" -- el color de celda de Sheets no viaja por el CSV publicado, así
+// que el ❌ es el marcador de "sin stock" y aquí lo convertimos en el span rojo correspondiente.
+function formatearProveedoresDisponibles(texto) {
+    if (!texto) return '';
+    return String(texto)
+        .split(' / ')
+        .map(parte => {
+            const sinStock = parte.trim().startsWith('❌');
+            const nombre = parte.trim().replace(/^❌/, '');
+            return sinStock
+                ? `<span style="color:#ef4444; font-weight:bold;">${nombre}</span>`
+                : `<span>${nombre}</span>`;
+        })
+        .join(' / ');
+}
+
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
 function renderKitsAgrupados(datos) {
     const familias = {};
@@ -193,8 +210,12 @@ function renderKitsAgrupados(datos) {
             
             componentes.forEach(comp => {
                 htmlTotal += `<tr>`;
-                headers.forEach(h => { 
-                    htmlTotal += `<td title="${comp[h] || ''}">${comp[h] || ''}</td>`; 
+                headers.forEach(h => {
+                    if (h === 'Proveedores_Disponibles') {
+                        htmlTotal += `<td title="${comp[h] || ''}">${formatearProveedoresDisponibles(comp[h])}</td>`;
+                    } else {
+                        htmlTotal += `<td title="${comp[h] || ''}">${comp[h] || ''}</td>`;
+                    }
                 });
                 htmlTotal += `</tr>`;
             });
