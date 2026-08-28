@@ -4,7 +4,7 @@ const ENV = {
     SHEET_ID: '2PACX-1vQitSKxbhg-LRaczPO4vsSxS4rA9jV2N3uz7xnyLu7-ufTzWW-2Zm9arK_zL_18C84kma3xvlIua32_',
     
     // URL de tu Apps Script (Para el futuro módulo de escritura)
-    API_URL: 'https://script.google.com/macros/s/AKfycbxMMmhCUuHZM42-K5718Ie0a-10KDs6jFib1wpzJm2_ypYSnJH6QjOVpDTlfGkOFxeo/exec', 
+    API_URL: 'https://script.google.com/macros/s/AKfycbzgxerr6fNcTl2XGlr4UxUi85aYTgVZcO8qj51Y9Zg2sNHlklXB7elxX6UuHHCdaEi8/exec', 
 
     // MAPEO EXACTO DE PESTAÑAS (Nombre en el HTML vs GID de Google)
     SHEETS: {
