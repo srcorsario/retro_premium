@@ -10,19 +10,17 @@ export async function inicializarModuloPedidos() {
     
     const select = document.getElementById('select-kit');
     const btnVerificar = document.getElementById('btn-verificar-stock');
-    const btnSyncLCSC = document.getElementById('btn-sync-lcsc');
+    // MODIFICADO: los botones sueltos de sincronización (LCSC, TME auto, Col Kits, Proveedores,
+    // Pack/Precio) se sustituyen por uno solo que encadena las 5 sincronizaciones en Apps Script.
+    const btnSyncTodo = document.getElementById('btn-sync-todo');
     const btnSyncAli = document.getElementById('btn-sync-aliexpress');
     const btnCancelAli = document.getElementById('btn-cancel-aliexpress');
     const btnSubmitAli = document.getElementById('btn-submit-aliexpress');
-    const btnSyncKitsCol = document.getElementById('btn-sync-kits-col'); // NUEVO
-    const btnSyncTme = document.getElementById('btn-sync-tme'); // NUEVO
-    const btnCancelTme = document.getElementById('btn-cancel-tme'); // NUEVO
-    const btnSubmitTme = document.getElementById('btn-submit-tme'); // NUEVO
-    const btnSyncTmeAuto = document.getElementById('btn-sync-tme-auto'); // NUEVO
-    const btnSyncProveedoresKits = document.getElementById('btn-sync-proveedores-kits'); // NUEVO
-    const btnSyncPackPrecioKits = document.getElementById('btn-sync-pack-precio-kits'); // NUEVO
+    const btnSyncTme = document.getElementById('btn-sync-tme'); // asistente manual TME (respaldo)
+    const btnCancelTme = document.getElementById('btn-cancel-tme');
+    const btnSubmitTme = document.getElementById('btn-submit-tme');
 
-    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncKitsCol || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnSyncTmeAuto || !btnSyncProveedoresKits || !btnSyncPackPrecioKits) return;
+    if (!select || !btnVerificar || !btnSyncTodo || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncTme || !btnCancelTme || !btnSubmitTme) return;
 
     const datosKits = await obtenerDatos('Kits_Consolas');
     const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
@@ -36,17 +34,13 @@ export async function inicializarModuloPedidos() {
     });
 
     btnVerificar.addEventListener('click', verificarStock);
-    btnSyncLCSC.addEventListener('click', sincronizarLCSC);
+    btnSyncTodo.addEventListener('click', sincronizarTodo); // NUEVO: botón único
     btnSyncAli.addEventListener('click', abrirModalAliExpress);
     btnCancelAli.addEventListener('click', cerrarModalAliExpress);
     btnSubmitAli.addEventListener('click', enviarDatosAliExpress);
-    btnSyncKitsCol.addEventListener('click', sincronizarKitsUsados); // NUEVO
-    btnSyncTme.addEventListener('click', abrirModalTME); // NUEVO
-    btnCancelTme.addEventListener('click', cerrarModalTME); // NUEVO
-    btnSubmitTme.addEventListener('click', enviarDatosTME); // NUEVO
-    btnSyncTmeAuto.addEventListener('click', sincronizarTME); // NUEVO
-    btnSyncProveedoresKits.addEventListener('click', sincronizarProveedoresKits); // NUEVO
-    btnSyncPackPrecioKits.addEventListener('click', sincronizarPackPrecioKits); // NUEVO
+    btnSyncTme.addEventListener('click', abrirModalTME);
+    btnCancelTme.addEventListener('click', cerrarModalTME);
+    btnSubmitTme.addEventListener('click', enviarDatosTME);
 
     pedidosInicializado = true;
 }
@@ -112,14 +106,18 @@ async function verificarStock() {
     }
 }
 
-async function sincronizarLCSC() {
-    mostrarMensaje('msg-pedidos', '🔄 Enviando orden de sincronización a Google Sheets...', false);
-    const exito = await actualizarDatos({ action: 'sync_lcsc' });
+// NUEVO: Sustituye a sincronizarLCSC + sincronizarTME + sincronizarKitsUsados +
+// sincronizarProveedoresKits + sincronizarPackPrecioKits -- un único botón que en Apps Script
+// (acción 'sync_todo', ver Codigo.gs -> ejecutarSincronizacionCompleta) encadena las 5
+// sincronizaciones seguidas: LCSC, TME, y las 3 columnas derivadas de Kits_Consolas.
+async function sincronizarTodo() {
+    mostrarMensaje('msg-pedidos', '🔄 Enviando orden de sincronización completa a Google Sheets (LCSC + TME + columnas de Kits)...', false);
+    const exito = await actualizarDatos({ action: 'sync_todo' });
     if (exito) {
-        if (confirm("✅ ¡Orden recibida!\n\nGoogle está actualizando la hoja en segundo plano.\n\nPulsa Aceptar para refrescar la web cuando veas que ha terminado en tu Google Sheet.")) {
+        if (confirm("✅ ¡Orden recibida!\n\nGoogle está sincronizando LCSC, TME y las columnas de Kits en segundo plano (puede tardar uno o dos minutos).\n\nPulsa Aceptar para refrescar la web cuando veas que ha terminado en tu Google Sheet.")) {
             location.reload();
         } else {
-            mostrarMensaje('msg-pedidos', '⏳ Sincronización en proceso. Refresca la web manualmente cuando quieras.', false);
+            mostrarMensaje('msg-pedidos', '⏳ Sincronización completa en proceso. Refresca la web manualmente cuando quieras.', false);
         }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al enviar la orden de sincronización.', true);
@@ -184,21 +182,6 @@ async function enviarDatosAliExpress() {
 }
 
 // --- NUEVO: MÓDULO TME (mismo patrón que AliExpress) ---
-// NUEVO: Sincronización automática de TME (equivalente a sincronizarLCSC)
-async function sincronizarTME() {
-    mostrarMensaje('msg-pedidos', '🔄 Enviando orden de sincronización TME a Google Sheets...', false);
-    const exito = await actualizarDatos({ action: 'sync_tme' });
-    if (exito) {
-        if (confirm("✅ ¡Orden recibida!\n\nGoogle está consultando la API de TME en segundo plano.\n\nPulsa Aceptar para refrescar la web cuando veas que ha terminado en tu Google Sheet.")) {
-            location.reload();
-        } else {
-            mostrarMensaje('msg-pedidos', '⏳ Sincronización TME en proceso. Refresca la web manualmente cuando quieras.', false);
-        }
-    } else {
-        mostrarMensaje('msg-pedidos', '❌ Error al enviar la orden de sincronización TME.', true);
-    }
-}
-
 async function abrirModalTME() {
     const modal = document.getElementById('modal-tme');
     const selectComp = document.getElementById('tme-id-componente');
@@ -256,49 +239,3 @@ async function enviarDatosTME() {
     }
 }
 
-// NUEVA FUNCIÓN: Envía la orden a Google Sheets para rellenar la columna L de Kits_Consolas
-// (qué proveedores tienen cada componente y si tienen stock, para pintarlo en rojo/normal en la web)
-async function sincronizarProveedoresKits() {
-    mostrarMensaje('msg-pedidos', '🔄 Actualizando columna "Proveedores_Disponibles" en Google Sheets...', false);
-    const exito = await actualizarDatos({ action: 'sync_proveedores_kits' });
-    if (exito) {
-        if (confirm("✅ ¡Columna de Proveedores actualizada en Google Sheets!\n\nPulsa Aceptar para refrescar la web.")) {
-            location.reload();
-        } else {
-            mostrarMensaje('msg-pedidos', '✅ Columna actualizada. Refresca la web cuando quieras.', false);
-        }
-    } else {
-        mostrarMensaje('msg-pedidos', '❌ Error al actualizar la columna en Google Sheets.', true);
-    }
-}
-
-// NUEVA FUNCIÓN: Envía la orden a Google Sheets para rellenar la columna M de Kits_Consolas
-// ("Uds_Pack - Precio_Unid" por proveedor, con "(0pack - 0€)" cuando ese proveedor no tiene stock)
-async function sincronizarPackPrecioKits() {
-    mostrarMensaje('msg-pedidos', '🔄 Actualizando columna "Uds_Pack - Precio_Unid" en Google Sheets...', false);
-    const exito = await actualizarDatos({ action: 'sync_pack_precio_kits' });
-    if (exito) {
-        if (confirm("✅ ¡Columna de Pack/Precio actualizada en Google Sheets!\n\nPulsa Aceptar para refrescar la web.")) {
-            location.reload();
-        } else {
-            mostrarMensaje('msg-pedidos', '✅ Columna actualizada. Refresca la web cuando quieras.', false);
-        }
-    } else {
-        mostrarMensaje('msg-pedidos', '❌ Error al actualizar la columna en Google Sheets.', true);
-    }
-}
-
-// NUEVA FUNCIÓN: Envía la orden a Google Sheets para rellenar la columna R
-async function sincronizarKitsUsados() {
-    mostrarMensaje('msg-pedidos', '🔄 Actualizando columna "Kits_que_lo_usan" en Google Sheets...', false);
-    const exito = await actualizarDatos({ action: 'sync_kits_usados' });
-    if (exito) {
-        if (confirm("✅ ¡Columna de Kits actualizada en Google Sheets!\n\nPulsa Aceptar para refrescar la web.")) {
-            location.reload();
-        } else {
-            mostrarMensaje('msg-pedidos', '✅ Columna actualizada. Refresca la web cuando quieras.', false);
-        }
-    } else {
-        mostrarMensaje('msg-pedidos', '❌ Error al actualizar la columna en Google Sheets.', true);
-    }
-}

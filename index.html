@@ -45,18 +45,15 @@
             </div>
 
             <div style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
-                <p style="color: var(--text-secondary); font-size: 14px;">Sincroniza los precios y stock desde los proveedores.</p>
+                <!-- MODIFICADO: los 6 botones sueltos de sincronización se han reducido a uno solo
+                     ("Sincronizar Todo"), que en Apps Script encadena LCSC + TME + las 3 columnas
+                     de Kits_Consolas. Se dejan aparte los dos asistentes manuales (AliExpress no se
+                     puede automatizar, y TME manual sirve de respaldo si el automático falla). -->
+                <p style="color: var(--text-secondary); font-size: 14px;">Sincroniza precios y stock desde los proveedores, y las columnas de Kits que dependen de ellos.</p>
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button id="btn-sync-lcsc" class="btn" style="background: var(--success);">Sincronizar LCSC (Auto)</button>
+                    <button id="btn-sync-todo" class="btn" style="background: var(--success);">🔄 Sincronizar Todo (LCSC + TME + Kits)</button>
                     <button id="btn-sync-aliexpress" class="btn" style="background: var(--primary);">Añadir Variante AliExpress (Manual)</button>
-                    <button id="btn-sync-tme-auto" class="btn" style="background: var(--tme-color);">Sincronizar TME (Auto)</button>
-                    <button id="btn-sync-tme" class="btn" style="background: var(--tme-color); opacity: 0.75;">Añadir Variante TME (Manual)</button>
-                    <!-- NUEVO: Botón para sincronizar la columna R -->
-                    <button id="btn-sync-kits-col" class="btn" style="background: var(--text-secondary);">Sincronizar Col Kits (Sheets)</button>
-                    <!-- NUEVO: Botón para sincronizar la columna L (proveedores/stock por componente) -->
-                    <button id="btn-sync-proveedores-kits" class="btn" style="background: var(--text-secondary);">Sincronizar Proveedores (Kits)</button>
-                    <!-- NUEVO: Botón para sincronizar la columna M (pack/precio unitario por proveedor) -->
-                    <button id="btn-sync-pack-precio-kits" class="btn" style="background: var(--text-secondary);">Sincronizar Pack/Precio (Kits)</button>
+                    <button id="btn-sync-tme" class="btn" style="background: var(--tme-color);">Añadir Variante TME (Manual)</button>
                 </div>
             </div>
             
