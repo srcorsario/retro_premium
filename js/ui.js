@@ -211,10 +211,25 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
 // NUEVO: La columna "Proveedores_Disponibles" (rellenada desde Apps Script) llega como texto
 // plano tipo "LCSC / ❌TME" -- el color de celda de Sheets no viaja por el CSV publicado, así
 // que el ❌ es el marcador de "sin stock" y aquí lo convertimos en el span rojo correspondiente.
+// MODIFICADO: si el componente tiene un sustituto (hoja Sustituciones), Apps Script añade al
+// final del texto una nota "💬 Sustituto: OTRO_ID" -- la separamos ANTES de partir por " / "
+// (si no, el 💬 se colaría dentro del último proveedor y rompería su formato) y la pintamos
+// aparte, en azul, para reconocer la relación entre las dos filas sin mezclar sus proveedores.
 function formatearProveedoresDisponibles(texto) {
     if (!texto) return '';
-    return String(texto)
+    let base = String(texto);
+    let notaHtml = '';
+
+    const idxNota = base.indexOf('💬');
+    if (idxNota !== -1) {
+        const nota = base.slice(idxNota).trim(); // "💬 Sustituto: 025101.5MXL"
+        base = base.slice(0, idxNota).trim();
+        notaHtml = ` <span style="color:#3b82f6; font-size:11px;" title="Componente sustituible (hoja Sustituciones) -- evidentemente, solo hace falta comprar uno de los dos">${nota}</span>`;
+    }
+
+    const proveedoresHtml = base
         .split(' / ')
+        .filter(parte => parte.trim() !== '')
         .map(parte => {
             const sinStock = parte.trim().startsWith('❌');
             const nombre = parte.trim().replace(/^❌/, '');
@@ -223,6 +238,8 @@ function formatearProveedoresDisponibles(texto) {
                 : `<span>${nombre}</span>`;
         })
         .join(' / ');
+
+    return proveedoresHtml + notaHtml;
 }
 
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
