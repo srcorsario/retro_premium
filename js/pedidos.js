@@ -110,14 +110,31 @@ async function verificarStock() {
 // sincronizarProveedoresKits + sincronizarPackPrecioKits -- un único botón que en Apps Script
 // (acción 'sync_todo', ver Codigo.gs -> ejecutarSincronizacionCompleta) encadena las 5
 // sincronizaciones seguidas: LCSC, TME, y las 3 columnas derivadas de Kits_Consolas.
+// MODIFICADO: la petición se manda con fetch(mode:'no-cors'), que SÍ espera a que Apps Script
+// termine de verdad antes de resolver (aunque no podamos leer su respuesta) -- así que mientras
+// tanto no pasaba nada en pantalla y parecía colgado. Ahora se ve un contador en marcha. Se usa
+// un contador que SUMA segundos (no una cuenta atrás fija a 60) porque la duración real depende
+// de cuántos componentes tengas -- con muchos puede pasar de 60s, y una cuenta atrás llegando a
+// 0 antes de tiempo daría la falsa impresión de que ya terminó cuando sigue trabajando.
 async function sincronizarTodo() {
-    mostrarMensaje('msg-pedidos', '🔄 Enviando orden de sincronización completa a Google Sheets (LCSC + TME + columnas de Kits)...', false);
+    let segundos = 0;
+    const actualizarContador = () => {
+        mostrarMensaje('msg-pedidos', `🔄 Sincronizando LCSC + TME + columnas de Kits... (${segundos}s transcurridos, normalmente 1-2 min)`, false);
+    };
+    actualizarContador();
+    const intervalo = setInterval(() => {
+        segundos++;
+        actualizarContador();
+    }, 1000);
+
     const exito = await actualizarDatos({ action: 'sync_todo' });
+    clearInterval(intervalo);
+
     if (exito) {
-        if (confirm("✅ ¡Orden recibida!\n\nGoogle está sincronizando LCSC, TME y las columnas de Kits en segundo plano (puede tardar uno o dos minutos).\n\nPulsa Aceptar para refrescar la web cuando veas que ha terminado en tu Google Sheet.")) {
+        if (confirm(`✅ ¡Sincronización completa! (tardó ${segundos}s)\n\nGoogle ha terminado de sincronizar LCSC, TME y las columnas de Kits.\n\nPulsa Aceptar para refrescar la web y ver los cambios.`)) {
             location.reload();
         } else {
-            mostrarMensaje('msg-pedidos', '⏳ Sincronización completa en proceso. Refresca la web manualmente cuando quieras.', false);
+            mostrarMensaje('msg-pedidos', `✅ Sincronización completa (${segundos}s). Refresca la web cuando quieras.`, false);
         }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al enviar la orden de sincronización.', true);
