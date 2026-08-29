@@ -78,9 +78,12 @@ async function cargarDatosPedido() {
         datos.forEach(row => {
             const id = (row['ID_Componente'] || '').trim();
             if (!id) return;
-            const udsPack = parseFloat(row['Variacion_Pack']) || 0;
-            const precioPack = parseFloat(row['Precio_Pack']) || 0;
-            const stockPacks = parseFloat(row['Stock_Packs']) || 0;
+            const udsPack = parseNumeroES(row['Variacion_Pack']);
+            // OJO: la columna real en Variantes_LCSC/AliExpress/TME se llama "Precio_Pack_EUR"
+            // (no "Precio_Pack", ese nombre es de la hoja Componentes) -- si se lee mal, el precio
+            // sale siempre 0 y el generador de pedido descarta todos los tramos como si no existieran.
+            const precioPack = parseNumeroES(row['Precio_Pack_EUR']);
+            const stockPacks = parseNumeroES(row['Stock_Packs']);
             if (udsPack <= 0) return;
             if (!mapa[id]) mapa[id] = [];
             mapa[id].push({ udsPack, precioPack, stockPacks });
@@ -380,4 +383,16 @@ function recalcularPedido() {
 
 function formatearPrecioLocal(n) {
     return (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
+}
+
+// NUEVO: Las hojas Variantes_* guardan los números en formato español (coma decimal), a veces
+// con el símbolo € pegado o con espacio, p.ej. "0,7027" / "3,69€" / "0,37 €". parseFloat normal
+// se detiene en la coma y devuelve 0 o un valor truncado -- de ahí que antes saliera todo a 0,00€.
+function parseNumeroES(valor) {
+    if (valor === null || valor === undefined) return 0;
+    let texto = String(valor).trim();
+    if (!texto) return 0;
+    texto = texto.replace(/[€$\s]/g, '').replace(',', '.');
+    const numero = parseFloat(texto);
+    return isNaN(numero) ? 0 : numero;
 }
