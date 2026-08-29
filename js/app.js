@@ -2,7 +2,8 @@
 import ENV from './config.js';
 import { obtenerDatos } from './api.js';
 import { renderTabla, mostrarMensaje } from './ui.js';
-import { inicializarModuloPedidos } from './pedidos.js'; 
+import { inicializarModuloPedidos } from './pedidos.js';
+import { inicializarModuloPedido } from './pedido.js'; // NUEVO: generador de pedido
 
 // Variable para saber qué pestaña estamos viendo
 let vistaActual = 'Componentes';
@@ -92,6 +93,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Inicializar el módulo de pedidos para el selector de kits y botones
     inicializarModuloPedidos();
+
+    // NUEVO: Inicializar el generador de pedido (selección de kits + cantidades)
+    inicializarModuloPedido();
     
     // Poner a escuchar los botones de las pestañas
     const botones = document.querySelectorAll('.tab-btn');
