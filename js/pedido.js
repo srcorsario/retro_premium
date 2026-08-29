@@ -2,6 +2,9 @@
 // NUEVO: Generador de pedido — selecciona kits + cantidades, suma componentes necesarios,
 // y para cada uno permite elegir de qué proveedor pedirlo (deshabilitado si no tiene stock),
 // fusionando componente original + sustituto (hoja "Sustituciones") en una sola necesidad.
+// Para cada proveedor, usa TODOS los tramos de pack reales (Variantes_LCSC/AliExpress/TME) y
+// elige automáticamente la combinación más barata que cubra la cantidad necesaria (no hace
+// falta que sea exacta: si un tramo mayor sale más barato en total, se prioriza ese salto).
 import ENV from './config.js';
 import { obtenerDatos } from './api.js';
 
@@ -67,25 +70,34 @@ async function cargarDatosPedido() {
         if (idNuevo && idOriginal) sustitucionesMap[idNuevo] = idOriginal;
     });
 
-    function mapaStockDesde(datos) {
+    // NUEVO: en vez de quedarnos con un único tramo de pack (el que guarda Componentes),
+    // guardamos TODOS los tramos reales de cada proveedor -> ID_Componente, tal cual están
+    // en sus hojas de Variantes (cada fila = un tamaño de pack distinto con su propio stock).
+    function tiersPorId(datos) {
         const mapa = {};
         datos.forEach(row => {
             const id = (row['ID_Componente'] || '').trim();
             if (!id) return;
-            const stock = parseFloat(row['Stock_Packs']) || 0;
-            mapa[id] = (mapa[id] || 0) + stock;
+            const udsPack = parseFloat(row['Variacion_Pack']) || 0;
+            const precioPack = parseFloat(row['Precio_Pack']) || 0;
+            const stockPacks = parseFloat(row['Stock_Packs']) || 0;
+            if (udsPack <= 0) return;
+            if (!mapa[id]) mapa[id] = [];
+            mapa[id].push({ udsPack, precioPack, stockPacks });
         });
         return mapa;
     }
 
-    const stockPorProveedor = {
-        LCSC: mapaStockDesde(variantesLCSC),
-        ALIEXPRESS: mapaStockDesde(variantesAli),
-        TME: mapaStockDesde(variantesTME)
+    const tiersPorProveedor = {
+        LCSC: tiersPorId(variantesLCSC),
+        ALIEXPRESS: tiersPorId(variantesAli),
+        TME: tiersPorId(variantesTME)
     };
 
     // Agrupamos las filas de Componentes por "grupo" (el ID_Original si es un sustituto, o su
     // propio ID si no), igual que hace Apps Script para las columnas L/M de Kits_Consolas.
+    // Solo necesitamos saber qué combinaciones (proveedor, literalId, marca) existen -- los
+    // precios/packs reales se sacan de tiersPorProveedor, no de Componentes.
     const filasPorGrupo = {};
     componentes.forEach(row => {
         const literalId = (row['ID_Componente'] || '').trim();
@@ -96,14 +108,66 @@ async function cargarDatosPedido() {
         filasPorGrupo[grupo].push({
             literalId,
             proveedor,
-            marca: row['Marca_Top'] || '',
-            udsPack: parseFloat(row['Uds_Pack']) || 0,
-            precioPack: parseFloat(row['Precio_Pack']) || 0
+            marca: row['Marca_Top'] || ''
         });
     });
 
-    cacheDatosPedido = { kits, sustitucionesMap, filasPorGrupo, stockPorProveedor };
+    cacheDatosPedido = { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor };
     return cacheDatosPedido;
+}
+
+// NUEVO: dado el conjunto de tramos de pack reales de UN proveedor para UN componente, calcula
+// la combinación más barata que cubra "cantidadNecesaria". No exige un ajuste exacto: si comprar
+// un tramo mayor sale más barato en total que ajustarse al mínimo, se prioriza el más barato.
+// 1) Si algún tramo por sí solo cubre toda la cantidad (con stock suficiente), nos quedamos con
+//    el más barato de esos.
+// 2) Si ninguno solo llega, combinamos tramos empezando por el más barato por unidad hasta cubrir
+//    lo posible (o agotar el stock disponible).
+function calcularMejorCompra(tiers, cantidadNecesaria) {
+    const validos = (tiers || []).filter(t => t.udsPack > 0 && t.stockPacks > 0);
+    if (validos.length === 0 || cantidadNecesaria <= 0) {
+        return { logrado: false, desglose: [], totalUnidades: 0, totalPrecio: 0 };
+    }
+
+    let mejorSolo = null;
+    validos.forEach(t => {
+        const maxUnidadesDisponibles = t.udsPack * t.stockPacks;
+        if (maxUnidadesDisponibles < cantidadNecesaria) return;
+        const packs = Math.ceil(cantidadNecesaria / t.udsPack);
+        const precio = packs * t.precioPack;
+        const mejorActual = mejorSolo ? mejorSolo.packs * mejorSolo.udsPack : Infinity;
+        if (!mejorSolo || precio < mejorSolo.precio || (precio === mejorSolo.precio && (packs * t.udsPack) < mejorActual)) {
+            mejorSolo = { udsPack: t.udsPack, precioPack: t.precioPack, packs, precio };
+        }
+    });
+
+    if (mejorSolo) {
+        return {
+            logrado: true,
+            desglose: [{ udsPack: mejorSolo.udsPack, packs: mejorSolo.packs, precioPack: mejorSolo.precioPack }],
+            totalUnidades: mejorSolo.packs * mejorSolo.udsPack,
+            totalPrecio: mejorSolo.precio
+        };
+    }
+
+    // Ningún tramo cubre él solo la cantidad -> combinamos, priorizando el más barato por unidad
+    const ordenados = validos.slice().sort((a, b) => (a.precioPack / a.udsPack) - (b.precioPack / b.udsPack));
+    let restante = cantidadNecesaria;
+    let totalUnidades = 0;
+    let totalPrecio = 0;
+    const desglose = [];
+
+    ordenados.forEach(t => {
+        if (restante <= 0) return;
+        const packsNecesariosAqui = Math.min(t.stockPacks, Math.ceil(restante / t.udsPack));
+        if (packsNecesariosAqui <= 0) return;
+        desglose.push({ udsPack: t.udsPack, packs: packsNecesariosAqui, precioPack: t.precioPack });
+        totalUnidades += packsNecesariosAqui * t.udsPack;
+        totalPrecio += packsNecesariosAqui * t.precioPack;
+        restante -= packsNecesariosAqui * t.udsPack;
+    });
+
+    return { logrado: restante <= 0, desglose, totalUnidades, totalPrecio };
 }
 
 async function calcularPedido() {
@@ -130,7 +194,7 @@ async function calcularPedido() {
 
     resultadoDiv.innerHTML = '<p style="color:var(--text-secondary);">Calculando...</p>';
 
-    const { kits, sustitucionesMap, filasPorGrupo, stockPorProveedor } = await cargarDatosPedido();
+    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor } = await cargarDatosPedido();
 
     // Sumamos las necesidades por ID_Componente literal (tal cual aparece en Kits_Consolas)
     const necesidades = {};
@@ -151,10 +215,10 @@ async function calcularPedido() {
         return;
     }
 
-    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, stockPorProveedor);
+    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor);
 }
 
-function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, stockPorProveedor) {
+function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor) {
     idsNecesarios.sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 
     let filasHtml = '';
@@ -168,8 +232,10 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
 
         const opcionesConDatos = opciones
             .map(opt => {
-                const stock = (stockPorProveedor[opt.proveedor] && stockPorProveedor[opt.proveedor][opt.literalId]) || 0;
-                return Object.assign({}, opt, { stock, conStock: stock > 0 });
+                const tiers = (tiersPorProveedor[opt.proveedor] && tiersPorProveedor[opt.proveedor][opt.literalId]) || [];
+                const compra = calcularMejorCompra(tiers, cantidadNecesaria);
+                const hayStock = tiers.some(t => t.stockPacks > 0);
+                return Object.assign({}, opt, { compra, hayStock });
             })
             .sort((a, b) => ORDEN_PROVEEDORES.indexOf(a.proveedor) - ORDEN_PROVEEDORES.indexOf(b.proveedor));
 
@@ -177,24 +243,39 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
         const opcionesHtml = opcionesConDatos.length === 0
             ? '<span style="color:var(--danger); font-size:12px;">Componente no encontrado en Componentes</span>'
             : opcionesConDatos.map(opt => {
-                const disabled = !opt.conStock ? 'disabled' : '';
+                const disabled = !opt.hayStock ? 'disabled' : '';
                 let checked = '';
-                if (opt.conStock && !yaPreseleccionado) {
+                if (opt.hayStock && opt.compra.logrado && !yaPreseleccionado) {
                     checked = 'checked';
                     yaPreseleccionado = true;
                 }
                 const etiquetaProveedor = ETIQUETA_PROVEEDOR[opt.proveedor] || opt.proveedor;
                 const etiquetaMarca = opt.marca ? ` — ${opt.marca}` : '';
-                const textoStock = opt.conStock ? `${opt.stock} uds en stock` : 'Sin stock';
-                const colorTexto = opt.conStock ? '' : 'style="color:var(--danger);"';
+
+                let textoCompra;
+                let colorTexto = '';
+                if (!opt.hayStock) {
+                    textoCompra = 'Sin stock';
+                    colorTexto = 'style="color:var(--danger);"';
+                } else {
+                    const desgloseTexto = opt.compra.desglose.map(d => `${d.packs}×${d.udsPack}u`).join(' + ');
+                    textoCompra = `${desgloseTexto} = ${opt.compra.totalUnidades} uds — ${formatearPrecioLocal(opt.compra.totalPrecio)}€`;
+                    if (!opt.compra.logrado) {
+                        textoCompra += ' ⚠️ no cubre toda la cantidad';
+                        colorTexto = 'style="color:#eab308;"';
+                    }
+                }
+
                 return `
-                    <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0; ${!opt.conStock ? 'opacity:0.55;' : ''}">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0; ${!opt.hayStock ? 'opacity:0.55;' : ''}">
                         <input type="radio" name="${nombreGrupo}"
-                            data-uds-pack="${opt.udsPack}"
-                            data-precio-pack="${opt.precioPack}"
+                            data-total-unidades="${opt.compra.totalUnidades}"
+                            data-total-precio="${opt.compra.totalPrecio}"
+                            data-desglose="${opt.compra.desglose.map(d => `${d.packs}×${d.udsPack}u`).join(' + ')}"
+                            data-logrado="${opt.compra.logrado}"
                             ${checked} ${disabled}
                             class="pedido-radio-opcion">
-                        <span ${colorTexto}>${etiquetaProveedor}${etiquetaMarca} — pack de ${opt.udsPack} a ${formatearPrecioLocal(opt.precioPack)}€ (${textoStock})</span>
+                        <span ${colorTexto}>${etiquetaProveedor}${etiquetaMarca} — ${textoCompra}</span>
                     </label>`;
             }).join('');
 
@@ -209,6 +290,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     contenedor.innerHTML = `
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Cada opción ya calcula la combinación de packs más barata que cubre la cantidad necesaria (puede comprar algo de más si sale más rentable que ajustarse al mínimo).</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
@@ -240,11 +322,11 @@ function recalcularPedido() {
 
     let totalPrecio = 0;
     let componentesSinCubrir = 0;
+    let componentesParciales = 0;
     let totalComponentes = 0;
 
     tbody.querySelectorAll('tr').forEach(tr => {
         totalComponentes++;
-        const cantidadNecesaria = parseFloat(tr.getAttribute('data-cantidad-necesaria')) || 0;
         const radioSeleccionado = tr.querySelector('.pedido-radio-opcion:checked');
         const celdaPacks = tr.querySelector('.pedido-celda-packs');
         const celdaPrecio = tr.querySelector('.pedido-celda-precio');
@@ -257,14 +339,16 @@ function recalcularPedido() {
             return;
         }
 
+        const logrado = radioSeleccionado.getAttribute('data-logrado') === 'true';
         tr.classList.remove('row-danger');
+        tr.classList.toggle('row-warning', !logrado);
+        if (!logrado) componentesParciales++;
 
-        const udsPack = parseFloat(radioSeleccionado.getAttribute('data-uds-pack')) || 0;
-        const precioPack = parseFloat(radioSeleccionado.getAttribute('data-precio-pack')) || 0;
-        const packsNecesarios = udsPack > 0 ? Math.ceil(cantidadNecesaria / udsPack) : 0;
-        const precioEstimado = packsNecesarios * precioPack;
+        const desglose = radioSeleccionado.getAttribute('data-desglose') || '';
+        const totalUnidades = parseFloat(radioSeleccionado.getAttribute('data-total-unidades')) || 0;
+        const precioEstimado = parseFloat(radioSeleccionado.getAttribute('data-total-precio')) || 0;
 
-        if (celdaPacks) celdaPacks.textContent = udsPack > 0 ? `${packsNecesarios} pack(s)` : 'N/D';
+        if (celdaPacks) celdaPacks.textContent = `${desglose} (${totalUnidades} uds)`;
         if (celdaPrecio) celdaPrecio.textContent = `${formatearPrecioLocal(precioEstimado)}€`;
 
         totalPrecio += precioEstimado;
@@ -274,6 +358,9 @@ function recalcularPedido() {
         let texto = `Total: ${totalComponentes} componentes — Precio estimado: ${formatearPrecioLocal(totalPrecio)}€`;
         if (componentesSinCubrir > 0) {
             texto += ` <span style="color:var(--danger);">(${componentesSinCubrir} sin proveedor con stock seleccionado)</span>`;
+        }
+        if (componentesParciales > 0) {
+            texto += ` <span style="color:#eab308;">(${componentesParciales} no cubren toda la cantidad necesaria)</span>`;
         }
         resumenDiv.innerHTML = texto;
     }
