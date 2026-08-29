@@ -38,21 +38,46 @@ function calcularKitsPorComponente(datos, kits) {
     });
 }
 
+// NUEVO: Orden de proveedor para que, dentro de un mismo ID_Componente, salgan siempre en el mismo orden
+const ORDEN_PROVEEDOR = { LCSC: 0, ALIEXPRESS: 1, TME: 2 };
+
+// NUEVO: Agrupa visualmente las filas de "Componentes" por ID_Componente sin tocar la hoja de
+// Google Sheets (el orden real de las filas en Sheets no cambia, solo cómo se pintan aquí).
+function ordenarComponentesPorId(datos) {
+    return [...datos].sort((a, b) => {
+        const idA = String(a['ID_Componente'] || '');
+        const idB = String(b['ID_Componente'] || '');
+        const cmpId = idA.localeCompare(idB, 'es', { sensitivity: 'base' });
+        if (cmpId !== 0) return cmpId;
+
+        const provA = ORDEN_PROVEEDOR[String(a['Proveedor_Preferido'] || '').toUpperCase()] ?? 99;
+        const provB = ORDEN_PROVEEDOR[String(b['Proveedor_Preferido'] || '').toUpperCase()] ?? 99;
+        return provA - provB;
+    });
+}
+
 // Función principal que carga los datos
 async function cargarVista(nombrePestana) {
     vistaActual = nombrePestana;
-    
+
     const tituloVista = document.getElementById('titulo-vista');
-    
+
     if (tituloVista) tituloVista.innerText = `Cargando ${nombrePestana}...`;
-    
+
     let datos = await obtenerDatos(nombrePestana);
-    
+
     if (nombrePestana === 'Componentes' || nombrePestana === 'Variantes_LCSC' || nombrePestana === 'Variantes_AliExpress' || nombrePestana === 'Variantes_TME') {
         const datosKits = await obtenerDatos('Kits_Consolas');
         datos = calcularKitsPorComponente(datos, datosKits);
     }
-    
+
+    // NUEVO: Agrupamos las filas del mismo componente (p.ej. LCSC + TME) de forma consecutiva.
+    // Se hace DESPUÉS de calcularKitsPorComponente porque esa función reordena por Kits_que_lo_usan
+    // y descolocaría de nuevo las filas de un mismo ID_Componente.
+    if (nombrePestana === 'Componentes') {
+        datos = ordenarComponentesPorId(datos);
+    }
+
     renderTabla('contenedor-tabla', datos, nombrePestana);
     
     if (tituloVista) tituloVista.innerText = `${nombrePestana} (${datos.length} registros)`;
