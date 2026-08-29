@@ -20,8 +20,9 @@ export async function inicializarModuloPedidos() {
     const btnSubmitTme = document.getElementById('btn-submit-tme'); // NUEVO
     const btnSyncTmeAuto = document.getElementById('btn-sync-tme-auto'); // NUEVO
     const btnSyncProveedoresKits = document.getElementById('btn-sync-proveedores-kits'); // NUEVO
+    const btnSyncPackPrecioKits = document.getElementById('btn-sync-pack-precio-kits'); // NUEVO
 
-    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncKitsCol || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnSyncTmeAuto || !btnSyncProveedoresKits) return;
+    if (!select || !btnVerificar || !btnSyncLCSC || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncKitsCol || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnSyncTmeAuto || !btnSyncProveedoresKits || !btnSyncPackPrecioKits) return;
 
     const datosKits = await obtenerDatos('Kits_Consolas');
     const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
@@ -45,6 +46,7 @@ export async function inicializarModuloPedidos() {
     btnSubmitTme.addEventListener('click', enviarDatosTME); // NUEVO
     btnSyncTmeAuto.addEventListener('click', sincronizarTME); // NUEVO
     btnSyncProveedoresKits.addEventListener('click', sincronizarProveedoresKits); // NUEVO
+    btnSyncPackPrecioKits.addEventListener('click', sincronizarPackPrecioKits); // NUEVO
 
     pedidosInicializado = true;
 }
@@ -261,6 +263,22 @@ async function sincronizarProveedoresKits() {
     const exito = await actualizarDatos({ action: 'sync_proveedores_kits' });
     if (exito) {
         if (confirm("✅ ¡Columna de Proveedores actualizada en Google Sheets!\n\nPulsa Aceptar para refrescar la web.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '✅ Columna actualizada. Refresca la web cuando quieras.', false);
+        }
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al actualizar la columna en Google Sheets.', true);
+    }
+}
+
+// NUEVA FUNCIÓN: Envía la orden a Google Sheets para rellenar la columna M de Kits_Consolas
+// ("Uds_Pack - Precio_Unid" por proveedor, con "(0pack - 0€)" cuando ese proveedor no tiene stock)
+async function sincronizarPackPrecioKits() {
+    mostrarMensaje('msg-pedidos', '🔄 Actualizando columna "Uds_Pack - Precio_Unid" en Google Sheets...', false);
+    const exito = await actualizarDatos({ action: 'sync_pack_precio_kits' });
+    if (exito) {
+        if (confirm("✅ ¡Columna de Pack/Precio actualizada en Google Sheets!\n\nPulsa Aceptar para refrescar la web.")) {
             location.reload();
         } else {
             mostrarMensaje('msg-pedidos', '✅ Columna actualizada. Refresca la web cuando quieras.', false);
