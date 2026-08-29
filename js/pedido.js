@@ -14,6 +14,10 @@ let cacheDatosPedido = null; // se recalcula solo una vez por carga de página
 const ORDEN_PROVEEDORES = ['LCSC', 'ALIEXPRESS', 'TME'];
 const ETIQUETA_PROVEEDOR = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME' };
 
+// NUEVO: Gastos de envío fijos por tienda (de momento a mano; el día que se quiera afinar por
+// pedido real se pueden leer de la hoja "Gastos_Extra" en vez de estos valores fijos).
+const GASTOS_ENVIO = { LCSC: 20, ALIEXPRESS: 0, TME: 14 };
+
 export async function inicializarModuloPedido() {
     if (pedidoInicializado) return;
 
@@ -288,6 +292,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                             data-total-precio="${opt.compra.totalPrecio}"
                             data-desglose="${opt.compra.desglose.map(d => `${d.packs}×${d.udsPack}u`).join(' + ')}"
                             data-logrado="${opt.compra.logrado}"
+                            data-proveedor="${opt.proveedor}"
                             ${checked} ${disabled}
                             class="pedido-radio-opcion">
                         <span ${colorTexto}>${etiquetaProveedor}${etiquetaMarca} — ${textoCompra}</span>
@@ -321,6 +326,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
             </table>
         </div>
         <div id="pedido-resumen" style="margin-top:15px; font-size:14px; font-weight:bold; text-align:right;"></div>
+        <div id="pedido-desglose-tiendas" style="margin-top:25px;"></div>
     `;
 
     contenedor.querySelectorAll('.pedido-radio-opcion').forEach(radio => {
@@ -339,6 +345,10 @@ function recalcularPedido() {
     let componentesSinCubrir = 0;
     let componentesParciales = 0;
     let totalComponentes = 0;
+
+    // NUEVO: agrupamos también por tienda para pintar el desglose final del pedido
+    const porTienda = {};
+    ORDEN_PROVEEDORES.forEach(p => { porTienda[p] = { items: [], subtotal: 0 }; });
 
     tbody.querySelectorAll('tr').forEach(tr => {
         totalComponentes++;
@@ -362,11 +372,18 @@ function recalcularPedido() {
         const desglose = radioSeleccionado.getAttribute('data-desglose') || '';
         const totalUnidades = parseFloat(radioSeleccionado.getAttribute('data-total-unidades')) || 0;
         const precioEstimado = parseFloat(radioSeleccionado.getAttribute('data-total-precio')) || 0;
+        const proveedor = radioSeleccionado.getAttribute('data-proveedor') || '';
 
         if (celdaPacks) celdaPacks.textContent = `${desglose} (${totalUnidades} uds)`;
         if (celdaPrecio) celdaPrecio.textContent = `${formatearPrecioLocal(precioEstimado)}€`;
 
         totalPrecio += precioEstimado;
+
+        if (porTienda[proveedor]) {
+            const nombreComponente = (tr.children[0] && tr.children[0].textContent.trim()) || '';
+            porTienda[proveedor].items.push({ componente: nombreComponente, desglose, unidades: totalUnidades, precio: precioEstimado });
+            porTienda[proveedor].subtotal += precioEstimado;
+        }
     });
 
     if (resumenDiv) {
@@ -379,6 +396,66 @@ function recalcularPedido() {
         }
         resumenDiv.innerHTML = texto;
     }
+
+    renderDesglosePorTienda(porTienda);
+}
+
+// NUEVO: pinta, al final de la tabla, un bloque por cada tienda con los artículos que se
+// comprarían en ella (cantidad + precio), su subtotal, los gastos de envío fijos de esa tienda,
+// el total de esa tienda, y finalmente la suma completa del pedido (artículos + envíos).
+function renderDesglosePorTienda(porTienda) {
+    const desgloseDiv = document.getElementById('pedido-desglose-tiendas');
+    if (!desgloseDiv) return;
+
+    let totalGeneral = 0;
+    let huboAlgunaTienda = false;
+    let html = '<h3 style="margin-bottom:10px;">🏪 Desglose por tienda</h3>';
+
+    ORDEN_PROVEEDORES.forEach(proveedor => {
+        const datos = porTienda[proveedor];
+        if (!datos || datos.items.length === 0) return;
+
+        huboAlgunaTienda = true;
+        const envio = GASTOS_ENVIO[proveedor] || 0;
+        const totalTienda = datos.subtotal + envio;
+        totalGeneral += totalTienda;
+
+        const filasHtml = datos.items.map(item => `
+            <tr>
+                <td>${item.componente}</td>
+                <td>${item.desglose} (${item.unidades} uds)</td>
+                <td>${formatearPrecioLocal(item.precio)}€</td>
+            </tr>`).join('');
+
+        html += `
+            <div style="margin-bottom:18px; border:1px solid var(--border-color); border-radius:6px; padding:12px 15px;">
+                <h4 style="margin:0 0 10px 0; color:var(--primary);">${ETIQUETA_PROVEEDOR[proveedor] || proveedor}</h4>
+                <div style="overflow-x:auto;">
+                    <table>
+                        <thead><tr><th>Componente</th><th>Cantidad</th><th>Precio</th></tr></thead>
+                        <tbody>${filasHtml}</tbody>
+                    </table>
+                </div>
+                <div style="text-align:right; font-size:13px; color:var(--text-secondary); margin-top:8px;">
+                    Subtotal artículos: ${formatearPrecioLocal(datos.subtotal)}€ &nbsp;+&nbsp; Gastos de envío: ${formatearPrecioLocal(envio)}€
+                </div>
+                <div style="text-align:right; font-size:15px; font-weight:bold; margin-top:4px;">
+                    Total ${ETIQUETA_PROVEEDOR[proveedor] || proveedor}: ${formatearPrecioLocal(totalTienda)}€
+                </div>
+            </div>`;
+    });
+
+    if (!huboAlgunaTienda) {
+        desgloseDiv.innerHTML = '';
+        return;
+    }
+
+    html += `
+        <div style="text-align:right; font-size:17px; font-weight:bold; border-top:2px solid var(--border-color); padding-top:12px;">
+            Total del pedido (artículos + envíos): ${formatearPrecioLocal(totalGeneral)}€
+        </div>`;
+
+    desgloseDiv.innerHTML = html;
 }
 
 function formatearPrecioLocal(n) {
