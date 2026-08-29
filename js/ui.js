@@ -3,6 +3,8 @@ import ENV from './config.js';
 
 // Clave para guardar la configuración de columnas en LocalStorage
 const LS_COL_VISIBILITY = 'retro_premium_col_visibility';
+// NUEVO: Clave separada para la visibilidad de columnas de la pestaña Kits (no comparte ajustes con Componentes)
+const LS_COL_VISIBILITY_KITS = 'retro_premium_col_visibility_kits';
 
 export function renderTabla(contenedorID, datos, nombrePestana) {
     const container = document.getElementById(contenedorID);
@@ -19,9 +21,59 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         Object.values(row).some(val => val !== '' && val !== null && val !== undefined)
     ).slice(0, ENV.MAX_TABLE_ROWS);
 
-    // Si es la pestaña de Kits, usamos la lógica del acordeón
+    // Si es la pestaña de Kits, usamos la lógica del acordeón (con los mismos toggles de columnas que Componentes)
     if (nombrePestana === 'Kits_Consolas') {
-        container.innerHTML = renderKitsAgrupados(datosLimpios);
+        const allHeadersKits = Object.keys(datosLimpios[0]);
+
+        let hiddenColsKits = [];
+        const savedColsKits = localStorage.getItem(LS_COL_VISIBILITY_KITS);
+        if (savedColsKits) {
+            try {
+                hiddenColsKits = JSON.parse(savedColsKits);
+            } catch (e) {
+                hiddenColsKits = [];
+            }
+        }
+
+        const visibleHeadersKits = allHeadersKits.filter(h => !hiddenColsKits.includes(h));
+
+        // Inyectar los toggles antes del acordeón
+        let toggleHtmlKits = '<div class="col-toggle-container">';
+        allHeadersKits.forEach(h => {
+            const isChecked = visibleHeadersKits.includes(h);
+            toggleHtmlKits += `
+                <label class="col-toggle-item">
+                    <input type="checkbox" data-col="${h}" ${isChecked ? 'checked' : ''}>
+                    ${h}
+                </label>`;
+        });
+        toggleHtmlKits += '</div>';
+
+        container.innerHTML = toggleHtmlKits;
+        container.insertAdjacentHTML('beforeend', renderKitsAgrupados(datosLimpios, visibleHeadersKits));
+
+        // Listeners para los checkboxes (mismo patrón que en Componentes)
+        const checkboxesKits = container.querySelectorAll('.col-toggle-item input[type="checkbox"]');
+        checkboxesKits.forEach(chk => {
+            chk.addEventListener('change', (e) => {
+                const colName = e.target.getAttribute('data-col');
+                let currentHidden = [];
+                const currentSaved = localStorage.getItem(LS_COL_VISIBILITY_KITS);
+                if (currentSaved) {
+                    try { currentHidden = JSON.parse(currentSaved); } catch (err) {}
+                }
+
+                if (e.target.checked) {
+                    currentHidden = currentHidden.filter(c => c !== colName);
+                } else {
+                    if (!currentHidden.includes(colName)) currentHidden.push(colName);
+                }
+
+                localStorage.setItem(LS_COL_VISIBILITY_KITS, JSON.stringify(currentHidden));
+                renderTabla(contenedorID, datos, nombrePestana);
+            });
+        });
+
         const tituloVista = document.getElementById('titulo-vista');
         if (tituloVista) tituloVista.innerText = `Kits y Placas Disponibles`;
         return;
@@ -174,7 +226,9 @@ function formatearProveedoresDisponibles(texto) {
 }
 
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
-function renderKitsAgrupados(datos) {
+// NUEVO: 2º parámetro opcional "visibleHeaders" -- si se pasa, la tabla interna de cada kit
+// solo muestra esas columnas (mismo checkbox de visibilidad que ya existe en Componentes).
+function renderKitsAgrupados(datos, visibleHeaders) {
     const familias = {};
     
     datos.forEach(fila => {
@@ -203,7 +257,9 @@ function renderKitsAgrupados(datos) {
             
             // LA TABLA OCULTA
             htmlTotal += `<div class="kit-table-container hidden">`;
-            const headers = Object.keys(componentes[0]);
+            const headers = (visibleHeaders && visibleHeaders.length > 0)
+                ? Object.keys(componentes[0]).filter(h => visibleHeaders.includes(h))
+                : Object.keys(componentes[0]);
             htmlTotal += `<table><thead><tr>`;
             headers.forEach(h => { htmlTotal += `<th>${h}</th>`; });
             htmlTotal += `</tr></thead><tbody>`;
