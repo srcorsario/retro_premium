@@ -124,16 +124,27 @@ async function cargarDatosPedido() {
 // 2) Si ninguno solo llega, combinamos tramos empezando por el más barato por unidad hasta cubrir
 //    lo posible (o agotar el stock disponible).
 function calcularMejorCompra(tiers, cantidadNecesaria) {
-    const validos = (tiers || []).filter(t => t.udsPack > 0 && t.stockPacks > 0);
+    const validos = (tiers || []).filter(t => t.udsPack > 0 && t.stockPacks > 0 && t.precioPack > 0);
     if (validos.length === 0 || cantidadNecesaria <= 0) {
         return { logrado: false, desglose: [], totalUnidades: 0, totalPrecio: 0 };
     }
 
+    // NOTA IMPORTANTE: "stockPacks" (columna Stock_Packs) guarda unidades individuales en stock
+    // (p.ej. viene directo del "inventoryLevel" de LCSC o del "stock" de TME), NO el número de
+    // packs disponibles. Así que primero hay que convertirlo a "packs completos disponibles".
+    validos.forEach(t => { t.packsDisponibles = Math.floor(t.stockPacks / t.udsPack); });
+    const conPacksDisponibles = validos.filter(t => t.packsDisponibles > 0);
+
+    if (conPacksDisponibles.length === 0) {
+        return { logrado: false, desglose: [], totalUnidades: 0, totalPrecio: 0 };
+    }
+
     let mejorSolo = null;
-    validos.forEach(t => {
-        const maxUnidadesDisponibles = t.udsPack * t.stockPacks;
-        if (maxUnidadesDisponibles < cantidadNecesaria) return;
+    conPacksDisponibles.forEach(t => {
+        const maxUnidadesComprables = t.packsDisponibles * t.udsPack;
+        if (maxUnidadesComprables < cantidadNecesaria) return;
         const packs = Math.ceil(cantidadNecesaria / t.udsPack);
+        if (packs > t.packsDisponibles) return;
         const precio = packs * t.precioPack;
         const mejorActual = mejorSolo ? mejorSolo.packs * mejorSolo.udsPack : Infinity;
         if (!mejorSolo || precio < mejorSolo.precio || (precio === mejorSolo.precio && (packs * t.udsPack) < mejorActual)) {
@@ -151,7 +162,7 @@ function calcularMejorCompra(tiers, cantidadNecesaria) {
     }
 
     // Ningún tramo cubre él solo la cantidad -> combinamos, priorizando el más barato por unidad
-    const ordenados = validos.slice().sort((a, b) => (a.precioPack / a.udsPack) - (b.precioPack / b.udsPack));
+    const ordenados = conPacksDisponibles.slice().sort((a, b) => (a.precioPack / a.udsPack) - (b.precioPack / b.udsPack));
     let restante = cantidadNecesaria;
     let totalUnidades = 0;
     let totalPrecio = 0;
@@ -159,7 +170,7 @@ function calcularMejorCompra(tiers, cantidadNecesaria) {
 
     ordenados.forEach(t => {
         if (restante <= 0) return;
-        const packsNecesariosAqui = Math.min(t.stockPacks, Math.ceil(restante / t.udsPack));
+        const packsNecesariosAqui = Math.min(t.packsDisponibles, Math.ceil(restante / t.udsPack));
         if (packsNecesariosAqui <= 0) return;
         desglose.push({ udsPack: t.udsPack, packs: packsNecesariosAqui, precioPack: t.precioPack });
         totalUnidades += packsNecesariosAqui * t.udsPack;
@@ -243,9 +254,10 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
         const opcionesHtml = opcionesConDatos.length === 0
             ? '<span style="color:var(--danger); font-size:12px;">Componente no encontrado en Componentes</span>'
             : opcionesConDatos.map(opt => {
-                const disabled = !opt.hayStock ? 'disabled' : '';
+                const usable = opt.hayStock && opt.compra.desglose.length > 0;
+                const disabled = !usable ? 'disabled' : '';
                 let checked = '';
-                if (opt.hayStock && opt.compra.logrado && !yaPreseleccionado) {
+                if (usable && opt.compra.logrado && !yaPreseleccionado) {
                     checked = 'checked';
                     yaPreseleccionado = true;
                 }
@@ -254,8 +266,8 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
 
                 let textoCompra;
                 let colorTexto = '';
-                if (!opt.hayStock) {
-                    textoCompra = 'Sin stock';
+                if (!opt.hayStock || opt.compra.desglose.length === 0) {
+                    textoCompra = 'Sin stock suficiente (ningún tramo con packs completos disponibles)';
                     colorTexto = 'style="color:var(--danger);"';
                 } else {
                     const desgloseTexto = opt.compra.desglose.map(d => `${d.packs}×${d.udsPack}u`).join(' + ');
@@ -267,7 +279,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                 }
 
                 return `
-                    <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0; ${!opt.hayStock ? 'opacity:0.55;' : ''}">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0; ${!usable ? 'opacity:0.55;' : ''}">
                         <input type="radio" name="${nombreGrupo}"
                             data-total-unidades="${opt.compra.totalUnidades}"
                             data-total-precio="${opt.compra.totalPrecio}"
