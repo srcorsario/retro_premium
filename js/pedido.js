@@ -236,17 +236,61 @@ async function calcularPedido() {
     renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor);
 }
 
+// NUEVO: el "grupo" de un ID_Componente literal es el ID original si tiene un sustituto
+// registrado en la hoja Sustituciones, o su propio ID si no -- misma fórmula que ya usaba
+// cargarDatosPedido() para agrupar filasPorGrupo, ahora reutilizada aquí para detectar parejas.
+function grupoDe(idComp, sustitucionesMap) {
+    return sustitucionesMap[idComp] || idComp;
+}
+
+// NUEVO: escapa texto para usarlo dentro de atributos HTML (name, data-grupo, title...) -- los
+// IDs de componentes vienen de la hoja de cálculo y en teoría podrían llevar comillas u otros
+// caracteres que rompan el HTML generado.
+function escapeAttr(texto) {
+    return String(texto)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor) {
-    idsNecesarios.sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    // MODIFICADO: antes se ordenaba solo alfabéticamente por ID. Ahora se ordena primero por
+    // "grupo" (el ID original si el componente tiene un sustituto en Sustituciones, o su propio
+    // ID si no) para que un componente y su sustituto queden SIEMPRE en filas consecutivas, y en
+    // segundo lugar alfabéticamente por su propio ID para que el resto del orden sea estable.
+    idsNecesarios.sort((a, b) => {
+        const grupoA = grupoDe(a, sustitucionesMap);
+        const grupoB = grupoDe(b, sustitucionesMap);
+        if (grupoA !== grupoB) return grupoA.localeCompare(grupoB, 'es', { sensitivity: 'base' });
+        return a.localeCompare(b, 'es', { sensitivity: 'base' });
+    });
+
+    // NUEVO: cuántas filas literales (ID_Componente distintos de Kits_Consolas) caen en cada
+    // grupo -- si hay más de una, son "pareja" (componente + su sustituto) y hay que marcarlas.
+    const conteoPorGrupo = {};
+    idsNecesarios.forEach(id => {
+        const g = grupoDe(id, sustitucionesMap);
+        conteoPorGrupo[g] = (conteoPorGrupo[g] || 0) + 1;
+    });
 
     let filasHtml = '';
+    // NUEVO: la preselección automática de la opción más barata ahora se hace a nivel de GRUPO,
+    // no de fila individual -- si dos filas son pareja, solo se marca una opción en todo el
+    // grupo, porque evidentemente solo hace falta comprar uno de los dos componentes.
+    const preseleccionadoPorGrupo = {};
 
     idsNecesarios.forEach((idComp, indiceFila) => {
         const cantidadNecesaria = necesidades[idComp];
-        const grupo = sustitucionesMap[idComp] || idComp;
+        const grupo = grupoDe(idComp, sustitucionesMap);
         const opciones = filasPorGrupo[grupo] || [];
 
-        const nombreGrupo = `pedido-opcion-${indiceFila}`;
+        // MODIFICADO: el "name" del grupo de radios ahora es por GRUPO (no por fila) -- así, si
+        // el componente y su sustituto ocupan dos <tr> distintas, sus radios comparten el mismo
+        // atributo "name" HTML y el navegador aplica exclusión mutua nativa ENTRE las dos filas
+        // (igual que si fueran opciones de una sola fila): marcar una opción en una fila
+        // desmarca automáticamente cualquier opción marcada en su fila pareja.
+        const nombreGrupo = `pedido-opcion-grupo-${escapeAttr(grupo)}`;
 
         const opcionesConDatos = opciones
             .map(opt => {
@@ -257,16 +301,15 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
             })
             .sort((a, b) => ORDEN_PROVEEDORES.indexOf(a.proveedor) - ORDEN_PROVEEDORES.indexOf(b.proveedor));
 
-        let yaPreseleccionado = false;
         const opcionesHtml = opcionesConDatos.length === 0
             ? '<span style="color:var(--danger); font-size:12px;">Componente no encontrado en Componentes</span>'
             : opcionesConDatos.map(opt => {
                 const usable = opt.hayStock && opt.compra.desglose.length > 0;
                 const disabled = !usable ? 'disabled' : '';
                 let checked = '';
-                if (usable && opt.compra.logrado && !yaPreseleccionado) {
+                if (usable && opt.compra.logrado && !preseleccionadoPorGrupo[grupo]) {
                     checked = 'checked';
-                    yaPreseleccionado = true;
+                    preseleccionadoPorGrupo[grupo] = true;
                 }
                 const etiquetaProveedor = ETIQUETA_PROVEEDOR[opt.proveedor] || opt.proveedor;
                 const etiquetaMarca = opt.marca ? ` — ${opt.marca}` : '';
@@ -299,9 +342,22 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                     </label>`;
             }).join('');
 
+        // NUEVO: si este componente tiene "pareja" (su grupo agrupa más de una fila -- p.ej.
+        // FUSE-PICO-1.5A-AXIAL / 025101.5MXL, sustituto en la hoja Sustituciones), se añade un
+        // icono 💬 junto al nombre con un tooltip señalando cuál es el otro, para reconocer la
+        // relación de un vistazo.
+        const tienePareja = conteoPorGrupo[grupo] > 1;
+        let iconoPareja = '';
+        if (tienePareja) {
+            const parejas = idsNecesarios.filter(id => id !== idComp && grupoDe(id, sustitucionesMap) === grupo);
+            iconoPareja = ` <span title="💬 Equivale a: ${escapeAttr(parejas.join(', '))} (hoja Sustituciones) — evidentemente, solo hace falta comprar uno de los dos" style="cursor:help;">💬</span>`;
+        }
+
         filasHtml += `
-            <tr data-fila-pedido="${indiceFila}" data-cantidad-necesaria="${cantidadNecesaria}">
-                <td>${idComp}</td>
+            <tr data-fila-pedido="${indiceFila}" data-cantidad-necesaria="${cantidadNecesaria}"
+                data-grupo="${escapeAttr(grupo)}" data-id-componente="${escapeAttr(idComp)}"
+                class="${tienePareja ? 'fila-con-pareja' : ''}">
+                <td>${idComp}${iconoPareja}</td>
                 <td>${cantidadNecesaria}</td>
                 <td>${opcionesHtml}</td>
                 <td class="pedido-celda-packs">-</td>
@@ -310,7 +366,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     contenedor.innerHTML = `
-        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Cada opción ya calcula la combinación de packs más barata que cubre la cantidad necesaria (puede comprar algo de más si sale más rentable que ajustarse al mínimo).</p>
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Cada opción ya calcula la combinación de packs más barata que cubre la cantidad necesaria (puede comprar algo de más si sale más rentable que ajustarse al mínimo). El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
@@ -350,13 +406,38 @@ function recalcularPedido() {
     const porTienda = {};
     ORDEN_PROVEEDORES.forEach(p => { porTienda[p] = { items: [], subtotal: 0 }; });
 
-    tbody.querySelectorAll('tr').forEach(tr => {
-        totalComponentes++;
+    const filas = Array.from(tbody.querySelectorAll('tr'));
+
+    // NUEVO: como una pareja de filas (componente + su sustituto) ahora comparte el mismo
+    // "name" de radio-group (misma "data-grupo"), primero miramos qué grupos ya tienen una
+    // opción marcada en CUALQUIERA de sus filas. Así la fila "hermana" que se queda sin radio
+    // marcado (porque la elección se hizo en la otra) no se pinta como un error sin cubrir,
+    // sino como "cubierta por su pareja" -- evidentemente, o se compra una o la otra.
+    const gruposConSeleccion = new Set();
+    filas.forEach(tr => {
+        if (tr.querySelector('.pedido-radio-opcion:checked')) {
+            gruposConSeleccion.add(tr.getAttribute('data-grupo'));
+        }
+    });
+
+    filas.forEach(tr => {
         const radioSeleccionado = tr.querySelector('.pedido-radio-opcion:checked');
         const celdaPacks = tr.querySelector('.pedido-celda-packs');
         const celdaPrecio = tr.querySelector('.pedido-celda-precio');
+        const grupo = tr.getAttribute('data-grupo');
 
         if (!radioSeleccionado) {
+            tr.classList.remove('row-danger', 'row-warning', 'row-cubierta-pareja');
+            if (grupo && gruposConSeleccion.has(grupo)) {
+                // NUEVO: no es un error de verdad -- su pareja ya cubre esta necesidad, así que
+                // esta fila no suma como un componente aparte en el recuento total (evidentemente
+                // es la MISMA necesidad que su pareja, no una necesidad extra).
+                if (celdaPacks) celdaPacks.textContent = '💬 cubierto por su pareja';
+                if (celdaPrecio) celdaPrecio.textContent = '—';
+                tr.classList.add('row-cubierta-pareja');
+                return;
+            }
+            totalComponentes++;
             if (celdaPacks) celdaPacks.textContent = '—';
             if (celdaPrecio) celdaPrecio.textContent = '—';
             tr.classList.add('row-danger');
@@ -364,8 +445,9 @@ function recalcularPedido() {
             return;
         }
 
+        totalComponentes++;
         const logrado = radioSeleccionado.getAttribute('data-logrado') === 'true';
-        tr.classList.remove('row-danger');
+        tr.classList.remove('row-danger', 'row-cubierta-pareja');
         tr.classList.toggle('row-warning', !logrado);
         if (!logrado) componentesParciales++;
 
@@ -380,7 +462,9 @@ function recalcularPedido() {
         totalPrecio += precioEstimado;
 
         if (porTienda[proveedor]) {
-            const nombreComponente = (tr.children[0] && tr.children[0].textContent.trim()) || '';
+            // MODIFICADO: se usa el atributo data-id-componente (id "limpio") en vez del texto de
+            // la celda, que ahora puede incluir el icono 💬 de pareja.
+            const nombreComponente = tr.getAttribute('data-id-componente') || '';
             porTienda[proveedor].items.push({ componente: nombreComponente, desglose, unidades: totalUnidades, precio: precioEstimado });
             porTienda[proveedor].subtotal += precioEstimado;
         }
