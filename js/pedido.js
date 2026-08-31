@@ -343,8 +343,15 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                 // MODIFICADO (fix): el desglose ahora es "cantidad a precio/ud (tramo desde X uds)"
                 // en vez de "packs×tamaño" -- ya no se compra en packs enteros, se compra la
                 // cantidad exacta al precio por unidad del tramo aplicable (ver calcularMejorCompra).
+                // MODIFICADO (fix): el PRECIO POR UNIDAD se muestra con 4 decimales (como LCSC/TME
+                // en sus propias fichas de producto, ej. "€ 0.0759"), no con 2 -- redondear un
+                // precio/unidad tan pequeño a 2 decimales (0,09€/ud) hacía que multiplicarlo a mano
+                // por la cantidad no cuadrase con el total real (70×0,09=6,30 vs el total correcto
+                // de 5,96€), pareciendo un error de cálculo cuando el cálculo interno sí era exacto
+                // -- solo la cifra mostrada del precio/unidad estaba de más redondeada. El TOTAL en
+                // € sí se sigue mostrando a 2 decimales (formatearPrecioLocal), como cualquier importe.
                 const desgloseTexto = opt.compra.desglose
-                    .map(d => `${d.unidades} uds a ${formatearPrecioLocal(d.precioUnitario)}€/ud (tramo ≥${d.udsPack}u)`)
+                    .map(d => `${d.unidades} uds a ${formatearPrecioUnitarioLocal(d.precioUnitario)}€/ud (tramo ≥${d.udsPack}u)`)
                     .join(' + ');
                 if (!opt.hayStock || opt.compra.desglose.length === 0) {
                     textoCompra = 'Sin stock disponible';
@@ -575,6 +582,14 @@ function renderDesglosePorTienda(porTienda) {
 
 function formatearPrecioLocal(n) {
     return (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
+}
+
+// NUEVO (fix): para precios POR UNIDAD (no importes totales) se usan 4 decimales, igual que
+// LCSC/TME en sus fichas de producto -- con solo 2 decimales, un precio/ud pequeño como
+// 0,0852€ se veía redondeado a "0,09€/ud", y multiplicarlo a mano por la cantidad no cuadraba
+// con el total real mostrado al lado (parecía un descuadre, aunque el total sí era exacto).
+function formatearPrecioUnitarioLocal(n) {
+    return (Math.round(n * 10000) / 10000).toFixed(4).replace('.', ',');
 }
 
 // NUEVO: Las hojas Variantes_* guardan los números en formato español (coma decimal), a veces
