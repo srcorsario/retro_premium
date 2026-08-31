@@ -2,9 +2,14 @@
 // NUEVO: Generador de pedido — selecciona kits + cantidades, suma componentes necesarios,
 // y para cada uno permite elegir de qué proveedor pedirlo (deshabilitado si no tiene stock),
 // fusionando componente original + sustituto (hoja "Sustituciones") en una sola necesidad.
-// Para cada proveedor, usa TODOS los tramos de pack reales (Variantes_LCSC/AliExpress/TME) y
-// elige automáticamente la combinación más barata que cubra la cantidad necesaria (no hace
-// falta que sea exacta: si un tramo mayor sale más barato en total, se prioriza ese salto).
+// Para cada proveedor, usa TODOS los tramos de precio reales (Variantes_LCSC/AliExpress/TME).
+// MODIFICADO (fix): los tramos NO son un tamaño de pack que haya que comprar en múltiplos
+// exactos -- son umbrales de precio por unidad (como en cualquier tienda de componentes tipo
+// LCSC/TME/Mouser). En cuanto la cantidad pedida alcanza el umbral de un tramo, TODA esa
+// cantidad se cobra al precio por unidad de ese tramo (no solo lo que pase del umbral), hasta
+// llegar al siguiente. Antes el código trataba cada tramo como un pack fijo a comprar en packs
+// enteros (ej. para 70 uds con tramos de 5/50/150 calculaba "14 packs de 5"), lo cual no refleja
+// cómo se compra realmente -- ver calcularMejorCompra().
 import ENV from './config.js';
 import { obtenerDatos } from './api.js';
 
@@ -123,69 +128,69 @@ async function cargarDatosPedido() {
     return cacheDatosPedido;
 }
 
-// NUEVO: dado el conjunto de tramos de pack reales de UN proveedor para UN componente, calcula
-// la combinación más barata que cubra "cantidadNecesaria". No exige un ajuste exacto: si comprar
-// un tramo mayor sale más barato en total que ajustarse al mínimo, se prioriza el más barato.
-// 1) Si algún tramo por sí solo cubre toda la cantidad (con stock suficiente), nos quedamos con
-//    el más barato de esos.
-// 2) Si ninguno solo llega, combinamos tramos empezando por el más barato por unidad hasta cubrir
-//    lo posible (o agotar el stock disponible).
+// NUEVO (fix): dado el conjunto de tramos de precio reales de UN proveedor para UN componente,
+// calcula el coste de cubrir "cantidadNecesaria" tal como funciona realmente la compra por
+// tramos (LCSC/TME/Mouser...): cada tramo define un UMBRAL de cantidad, no un tamaño de pack.
+// Se localiza el tramo aplicable -- el de mayor umbral (Variacion_Pack) que sea <= la cantidad
+// necesaria -- y se compra EXACTAMENTE la cantidad necesaria al precio por unidad de ese tramo
+// (precioPack / udsPack), sin redondear a múltiplos de pack. Si la cantidad necesaria es menor
+// que el tramo más bajo, no se puede pedir menos que ese mínimo: se compra el mínimo del tramo
+// más bajo (confirmado con el usuario).
+// El stock ("Stock_Packs") es SIEMPRE el mismo valor en todas las filas de tramo de un mismo
+// componente+proveedor (es el stock físico real, no "packs" -- ver comentario en tiersPorId),
+// así que basta comprobar que cubre la cantidad a comprar; si no llega, se cubre lo máximo
+// posible con el tramo de precio que corresponda a esa cantidad menor realmente disponible.
 function calcularMejorCompra(tiers, cantidadNecesaria) {
-    const validos = (tiers || []).filter(t => t.udsPack > 0 && t.stockPacks > 0 && t.precioPack > 0);
+    const validos = (tiers || []).filter(t => t.udsPack > 0 && t.precioPack > 0);
     if (validos.length === 0 || cantidadNecesaria <= 0) {
         return { logrado: false, desglose: [], totalUnidades: 0, totalPrecio: 0 };
     }
 
-    // NOTA IMPORTANTE: "stockPacks" (columna Stock_Packs) guarda unidades individuales en stock
-    // (p.ej. viene directo del "inventoryLevel" de LCSC o del "stock" de TME), NO el número de
-    // packs disponibles. Así que primero hay que convertirlo a "packs completos disponibles".
-    validos.forEach(t => { t.packsDisponibles = Math.floor(t.stockPacks / t.udsPack); });
-    const conPacksDisponibles = validos.filter(t => t.packsDisponibles > 0);
+    const ordenados = validos.slice().sort((a, b) => a.udsPack - b.udsPack);
+    const stockReal = Math.max(...ordenados.map(t => t.stockPacks || 0));
 
-    if (conPacksDisponibles.length === 0) {
+    if (stockReal <= 0) {
         return { logrado: false, desglose: [], totalUnidades: 0, totalPrecio: 0 };
     }
 
-    let mejorSolo = null;
-    conPacksDisponibles.forEach(t => {
-        const maxUnidadesComprables = t.packsDisponibles * t.udsPack;
-        if (maxUnidadesComprables < cantidadNecesaria) return;
-        const packs = Math.ceil(cantidadNecesaria / t.udsPack);
-        if (packs > t.packsDisponibles) return;
-        const precio = packs * t.precioPack;
-        const mejorActual = mejorSolo ? mejorSolo.packs * mejorSolo.udsPack : Infinity;
-        if (!mejorSolo || precio < mejorSolo.precio || (precio === mejorSolo.precio && (packs * t.udsPack) < mejorActual)) {
-            mejorSolo = { udsPack: t.udsPack, precioPack: t.precioPack, packs, precio };
+    // Tramo aplicable a una cantidad dada: el de mayor umbral <= esa cantidad (o el más bajo si
+    // la cantidad no llega ni a ese umbral -- no se puede comprar menos que el mínimo del tramo).
+    function tramoParaCantidad(cantidad) {
+        let tramo = ordenados[0];
+        for (const t of ordenados) {
+            if (t.udsPack <= cantidad) tramo = t;
+            else break;
         }
-    });
+        return tramo;
+    }
 
-    if (mejorSolo) {
+    const tramoAplicable = tramoParaCantidad(cantidadNecesaria);
+    const cantidadAComprar = Math.max(cantidadNecesaria, tramoAplicable.udsPack);
+
+    if (stockReal >= cantidadAComprar) {
+        const precioUnitario = tramoAplicable.precioPack / tramoAplicable.udsPack;
         return {
             logrado: true,
-            desglose: [{ udsPack: mejorSolo.udsPack, packs: mejorSolo.packs, precioPack: mejorSolo.precioPack }],
-            totalUnidades: mejorSolo.packs * mejorSolo.udsPack,
-            totalPrecio: mejorSolo.precio
+            desglose: [{ udsPack: tramoAplicable.udsPack, unidades: cantidadAComprar, precioUnitario }],
+            totalUnidades: cantidadAComprar,
+            totalPrecio: cantidadAComprar * precioUnitario
         };
     }
 
-    // Ningún tramo cubre él solo la cantidad -> combinamos, priorizando el más barato por unidad
-    const ordenados = conPacksDisponibles.slice().sort((a, b) => (a.precioPack / a.udsPack) - (b.precioPack / b.udsPack));
-    let restante = cantidadNecesaria;
-    let totalUnidades = 0;
-    let totalPrecio = 0;
-    const desglose = [];
-
-    ordenados.forEach(t => {
-        if (restante <= 0) return;
-        const packsNecesariosAqui = Math.min(t.packsDisponibles, Math.ceil(restante / t.udsPack));
-        if (packsNecesariosAqui <= 0) return;
-        desglose.push({ udsPack: t.udsPack, packs: packsNecesariosAqui, precioPack: t.precioPack });
-        totalUnidades += packsNecesariosAqui * t.udsPack;
-        totalPrecio += packsNecesariosAqui * t.precioPack;
-        restante -= packsNecesariosAqui * t.udsPack;
-    });
-
-    return { logrado: restante <= 0, desglose, totalUnidades, totalPrecio };
+    // No hay stock suficiente para la cantidad completa -- cubrimos lo máximo posible con el
+    // stock real disponible, recalculando qué tramo de precio corresponde a ESA cantidad menor.
+    const tramoParaStock = tramoParaCantidad(stockReal);
+    if (stockReal < tramoParaStock.udsPack) {
+        // Ni siquiera hay stock para el mínimo del tramo más bajo.
+        return { logrado: false, desglose: [], totalUnidades: 0, totalPrecio: 0 };
+    }
+    const precioUnitarioParcial = tramoParaStock.precioPack / tramoParaStock.udsPack;
+    return {
+        logrado: false,
+        desglose: [{ udsPack: tramoParaStock.udsPack, unidades: stockReal, precioUnitario: precioUnitarioParcial }],
+        totalUnidades: stockReal,
+        totalPrecio: stockReal * precioUnitarioParcial
+    };
 }
 
 async function calcularPedido() {
@@ -316,14 +321,19 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
 
                 let textoCompra;
                 let colorTexto = '';
+                // MODIFICADO (fix): el desglose ahora es "cantidad a precio/ud (tramo desde X uds)"
+                // en vez de "packs×tamaño" -- ya no se compra en packs enteros, se compra la
+                // cantidad exacta al precio por unidad del tramo aplicable (ver calcularMejorCompra).
+                const desgloseTexto = opt.compra.desglose
+                    .map(d => `${d.unidades} uds a ${formatearPrecioLocal(d.precioUnitario)}€/ud (tramo ≥${d.udsPack}u)`)
+                    .join(' + ');
                 if (!opt.hayStock || opt.compra.desglose.length === 0) {
-                    textoCompra = 'Sin stock suficiente (ningún tramo con packs completos disponibles)';
+                    textoCompra = 'Sin stock disponible';
                     colorTexto = 'style="color:var(--danger);"';
                 } else {
-                    const desgloseTexto = opt.compra.desglose.map(d => `${d.packs}×${d.udsPack}u`).join(' + ');
-                    textoCompra = `${desgloseTexto} = ${opt.compra.totalUnidades} uds — ${formatearPrecioLocal(opt.compra.totalPrecio)}€`;
+                    textoCompra = `${desgloseTexto} = ${formatearPrecioLocal(opt.compra.totalPrecio)}€`;
                     if (!opt.compra.logrado) {
-                        textoCompra += ' ⚠️ no cubre toda la cantidad';
+                        textoCompra += ' ⚠️ no cubre toda la cantidad (stock insuficiente)';
                         colorTexto = 'style="color:#eab308;"';
                     }
                 }
@@ -333,7 +343,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                         <input type="radio" name="${nombreGrupo}"
                             data-total-unidades="${opt.compra.totalUnidades}"
                             data-total-precio="${opt.compra.totalPrecio}"
-                            data-desglose="${opt.compra.desglose.map(d => `${d.packs}×${d.udsPack}u`).join(' + ')}"
+                            data-desglose="${desgloseTexto}"
                             data-logrado="${opt.compra.logrado}"
                             data-proveedor="${opt.proveedor}"
                             ${checked} ${disabled}
@@ -366,7 +376,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     contenedor.innerHTML = `
-        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Cada opción ya calcula la combinación de packs más barata que cubre la cantidad necesaria (puede comprar algo de más si sale más rentable que ajustarse al mínimo). El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la cantidad necesaria a esa cantidad exacta (si necesitas menos que el tramo más bajo, se compra su mínimo). El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
@@ -374,7 +384,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                         <th>Componente</th>
                         <th>Cantidad necesaria</th>
                         <th>Proveedor a pedir</th>
-                        <th>Packs a pedir</th>
+                        <th>Cantidad a pedir</th>
                         <th>Precio estimado</th>
                     </tr>
                 </thead>
@@ -456,7 +466,9 @@ function recalcularPedido() {
         const precioEstimado = parseFloat(radioSeleccionado.getAttribute('data-total-precio')) || 0;
         const proveedor = radioSeleccionado.getAttribute('data-proveedor') || '';
 
-        if (celdaPacks) celdaPacks.textContent = `${desglose} (${totalUnidades} uds)`;
+        // MODIFICADO: el texto de "desglose" ya incluye la cantidad y el precio/unidad
+        // (ver renderTablaPedido), así que ya no hace falta repetir "(N uds)" aparte.
+        if (celdaPacks) celdaPacks.textContent = desglose;
         if (celdaPrecio) celdaPrecio.textContent = `${formatearPrecioLocal(precioEstimado)}€`;
 
         totalPrecio += precioEstimado;
@@ -507,7 +519,7 @@ function renderDesglosePorTienda(porTienda) {
         const filasHtml = datos.items.map(item => `
             <tr>
                 <td>${item.componente}</td>
-                <td>${item.desglose} (${item.unidades} uds)</td>
+                <td>${item.desglose}</td>
                 <td>${formatearPrecioLocal(item.precio)}€</td>
             </tr>`).join('');
 
