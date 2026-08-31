@@ -217,7 +217,26 @@ async function calcularPedido() {
 
     resultadoDiv.innerHTML = '<p style="color:var(--text-secondary);">Calculando...</p>';
 
-    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor } = await cargarDatosPedido();
+    let datosPedido;
+    try {
+        datosPedido = await cargarDatosPedido();
+    } catch (err) {
+        // NUEVO (fix): red de seguridad -- obtenerDatos() ya no debería lanzar (ver api.js), pero
+        // si algo inesperado falla no queremos dejar "Calculando..." colgado sin explicación.
+        resultadoDiv.innerHTML = `<p style="color:var(--danger);">Error al calcular el pedido: ${err.message}. Prueba a recargar la página.</p>`;
+        return;
+    }
+    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor } = datosPedido;
+
+    // NUEVO (fix): si "Kits_Consolas" o "Componentes" vinieron vacíos (p.ej. porque su petición
+    // se quedó sin respuesta -- ver fetchConTimeout en api.js -- y se agotaron los reintentos),
+    // seguir adelante solo produce una tabla rota y confusa ("Componente no encontrado" en todo).
+    // Mejor avisar claramente y dejar que se reintente, que es lo que normalmente hace falta.
+    if (kits.length === 0 || Object.keys(filasPorGrupo).length === 0) {
+        cacheDatosPedido = null; // para que el próximo intento vuelva a pedir los datos, no reuse el vacío
+        resultadoDiv.innerHTML = '<p style="color:var(--danger);">No se han podido cargar todos los datos de la hoja (puede que Google haya tardado demasiado en responder). Pulsa "Calcular Pedido" otra vez.</p>';
+        return;
+    }
 
     // Sumamos las necesidades por ID_Componente literal (tal cual aparece en Kits_Consolas)
     const necesidades = {};
