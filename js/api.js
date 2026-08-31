@@ -1,26 +1,46 @@
 // js/api.js
 import ENV from './config.js';
 
-export async function obtenerDatos(nombrePestana) {
+// NUEVO (fix): fetch() no tiene ningún timeout por defecto -- si Google se atasca respondiendo
+// a UNA sola de las hojas (visto en un HAR real: la petición a "Componentes" se quedó colgada
+// sin responder nunca), esa única petición bloqueaba TODO Promise.all() en cargarDatosPedido()
+// para siempre, dejando "Calculando..." congelado sin ningún aviso. Esta versión corta la
+// petición a los 12s con AbortController y reintenta una vez más antes de rendirse (devolviendo
+// [] como ya hacía, para que el resto de la página siga funcionando con lo que sí haya llegado).
+async function fetchConTimeout(url, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        // Busca el gid correspondiente a la pestaña que le pedimos
-        const gid = ENV.SHEETS[nombrePestana];
-        
-        if (!gid) throw new Error(`No se encontró el GID para la pestaña: ${nombrePestana}`);
+        return await fetch(url, { signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
-        // Usamos la URL pública y súper estable que me confirmaste
-        const url = `https://docs.google.com/spreadsheets/d/e/${ENV.SHEET_ID}/pub?gid=${gid}&single=true&output=csv`;
-        
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Error en la red al leer CSV');
-        
-        const text = await response.text();
-        return parsearCSVaJSON(text);
-        
-    } catch (error) {
-        console.error(`Error al obtener ${nombrePestana}:`, error);
+export async function obtenerDatos(nombrePestana) {
+    // Busca el gid correspondiente a la pestaña que le pedimos
+    const gid = ENV.SHEETS[nombrePestana];
+    if (!gid) {
+        console.error(`No se encontró el GID para la pestaña: ${nombrePestana}`);
         return [];
     }
+
+    // Usamos la URL pública y súper estable que me confirmaste
+    const url = `https://docs.google.com/spreadsheets/d/e/${ENV.SHEET_ID}/pub?gid=${gid}&single=true&output=csv`;
+
+    for (let intento = 1; intento <= 2; intento++) {
+        try {
+            const response = await fetchConTimeout(url, 12000);
+            if (!response.ok) throw new Error('Error en la red al leer CSV');
+            const text = await response.text();
+            return parsearCSVaJSON(text);
+        } catch (error) {
+            const motivo = error.name === 'AbortError' ? 'tardó demasiado (timeout)' : error.message;
+            console.error(`Error al obtener ${nombrePestana} (intento ${intento}/2): ${motivo}`);
+            if (intento === 2) return [];
+        }
+    }
+    return [];
 }
 
 function parsearCSVaJSON(csvText) {
