@@ -29,7 +29,24 @@ const ORDEN_PRESELECCION = ['TME', 'LCSC', 'ALIEXPRESS'];
 
 // NUEVO: Gastos de envío fijos por tienda (de momento a mano; el día que se quiera afinar por
 // pedido real se pueden leer de la hoja "Gastos_Extra" en vez de estos valores fijos).
-const GASTOS_ENVIO = { LCSC: 20, ALIEXPRESS: 0, TME: 14 };
+// MODIFICADO 2026-09: LCSC se guarda desglosado en dos partes -- "envio" (el flete/courier que se
+// paga al hacer el pedido) y "aduanas" (la cuota de gestión/desembolso que cobra el transportista
+// al llegar a España -- ver [[retro-componentes-web]] sobre la queja confirmada de FedEx), porque
+// son dos cargos de origen distinto aunque ambos formen parte del coste real de comprar en LCSC.
+// AliExpress también aplica aduanas (8€), aunque su envío en sí siga siendo gratis.
+const GASTOS_ENVIO = {
+    LCSC: { envio: 40, aduanas: 30 },
+    ALIEXPRESS: { envio: 0, aduanas: 8 },
+    TME: { envio: 14, aduanas: 0 }
+};
+
+// NUEVO: total de gastos (envío + aduanas) de un proveedor, para no repetir la suma en cada sitio
+// que lo necesite.
+function totalGastosEnvio(proveedor) {
+    const g = GASTOS_ENVIO[proveedor];
+    if (!g) return 0;
+    return (g.envio || 0) + (g.aduanas || 0);
+}
 
 export async function inicializarModuloPedido() {
     if (pedidoInicializado) return;
@@ -654,9 +671,17 @@ function renderDesglosePorTienda(porTienda) {
         if (!datos || datos.items.length === 0) return;
 
         huboAlgunaTienda = true;
-        const envio = GASTOS_ENVIO[proveedor] || 0;
+        const gastos = GASTOS_ENVIO[proveedor] || { envio: 0, aduanas: 0 };
+        const envio = totalGastosEnvio(proveedor);
         const totalTienda = datos.subtotal + envio;
         totalGeneral += totalTienda;
+
+        // NUEVO: si el proveedor tiene aduanas>0 (de momento solo LCSC), se muestra el desglose
+        // "envío + aduanas" por separado en vez de un único importe, para que quede claro de dónde
+        // sale cada parte del gasto (ver comentario en GASTOS_ENVIO).
+        const textoGastos = gastos.aduanas > 0
+            ? `Envío: ${formatearPrecioLocal(gastos.envio)}€ + Aduanas/gestión: ${formatearPrecioLocal(gastos.aduanas)}€ (${formatearPrecioLocal(envio)}€ total)`
+            : `Gastos de envío: ${formatearPrecioLocal(envio)}€`;
 
         const filasHtml = datos.items.map(item => `
             <tr>
@@ -675,7 +700,7 @@ function renderDesglosePorTienda(porTienda) {
                     </table>
                 </div>
                 <div style="text-align:right; font-size:13px; color:var(--text-secondary); margin-top:8px;">
-                    Subtotal artículos: ${formatearPrecioLocal(datos.subtotal)}€ &nbsp;+&nbsp; Gastos de envío: ${formatearPrecioLocal(envio)}€
+                    Subtotal artículos: ${formatearPrecioLocal(datos.subtotal)}€ &nbsp;+&nbsp; ${textoGastos}
                 </div>
                 <div style="text-align:right; font-size:15px; font-weight:bold; margin-top:4px;">
                     Total ${ETIQUETA_PROVEEDOR[proveedor] || proveedor}: ${formatearPrecioLocal(totalTienda)}€
