@@ -68,6 +68,9 @@ td {
 /* NUEVO: fila "hermana" de una pareja Sustituciones cuya necesidad ya queda cubierta por la
    opción marcada en la otra fila del par -- no es un error, se pinta neutra/verdosa. */
 .row-cubierta-pareja { background-color: rgba(34, 197, 94, 0.12); opacity: 0.75; }
+/* NUEVO: fila cuya "Cantidad a pedir" es 0 porque el stock ya disponible cubre toda la necesidad
+   -- tampoco es un error, mismo tono neutro/verdoso que row-cubierta-pareja. */
+.row-cubierta-stock { background-color: rgba(34, 197, 94, 0.12); opacity: 0.75; }
 /* NUEVO: borde punteado izquierdo para resaltar visualmente que dos filas consecutivas son
    una pareja de componente + sustituto (hoja Sustituciones). */
 .fila-con-pareja td:first-child { border-left: 3px dotted var(--primary); }

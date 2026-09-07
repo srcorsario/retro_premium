@@ -82,13 +82,24 @@ export async function inicializarModuloPedido() {
 async function cargarDatosPedido() {
     if (cacheDatosPedido) return cacheDatosPedido;
 
-    const [componentes, kits, variantesLCSC, variantesAli, variantesTME] = await Promise.all([
+    const [componentes, kits, variantesLCSC, variantesAli, variantesTME, datosStock] = await Promise.all([
         obtenerDatos('Componentes'),
         obtenerDatos('Kits_Consolas'),
         obtenerDatos('Variantes_LCSC'),
         obtenerDatos('Variantes_AliExpress'),
-        obtenerDatos('Variantes_TME')
+        obtenerDatos('Variantes_TME'),
+        obtenerDatos('Stock_Almacen')
     ]);
+
+    // NUEVO: stock físico ya disponible por ID_Componente (mismo cálculo que verificarStock() en
+    // pedidos.js -- se suman todas las filas de Stock_Almacen de un mismo ID_Componente, por si
+    // hay stock repartido en varias entradas). Se usa para restar del pedido lo que ya se tiene.
+    const stockPorId = {};
+    datosStock.forEach(row => {
+        const id = (row['ID_Componente'] || '').trim();
+        if (!id) return;
+        stockPorId[id] = (stockPorId[id] || 0) + parseNumeroES(row['Uds_Disponibles']);
+    });
 
     // NUEVO: la hoja "Sustituciones" es opcional -- si todavía no está en config.js (SHEETS),
     // seguimos funcionando sin fusionar componente original + sustituto.
@@ -149,7 +160,7 @@ async function cargarDatosPedido() {
         });
     });
 
-    cacheDatosPedido = { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor };
+    cacheDatosPedido = { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId };
     return cacheDatosPedido;
 }
 
@@ -251,7 +262,7 @@ async function calcularPedido() {
         resultadoDiv.innerHTML = `<p style="color:var(--danger);">Error al calcular el pedido: ${err.message}. Prueba a recargar la página.</p>`;
         return;
     }
-    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor } = datosPedido;
+    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId } = datosPedido;
 
     // NUEVO (fix): si "Kits_Consolas" o "Componentes" vinieron vacíos (p.ej. porque su petición
     // se quedó sin respuesta -- ver fetchConTimeout en api.js -- y se agotaron los reintentos),
@@ -282,7 +293,7 @@ async function calcularPedido() {
         return;
     }
 
-    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor);
+    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId);
 }
 
 // NUEVO: el "grupo" de un ID_Componente literal es el ID original si tiene un sustituto
@@ -303,7 +314,7 @@ function escapeAttr(texto) {
         .replace(/>/g, '&gt;');
 }
 
-function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor) {
+function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId) {
     // MODIFICADO: antes se ordenaba solo alfabéticamente por ID. Ahora se ordena primero por
     // "grupo" (el ID original si el componente tiene un sustituto en Sustituciones, o su propio
     // ID si no) para que un componente y su sustituto queden SIEMPRE en filas consecutivas, y en
@@ -334,6 +345,14 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
         const grupo = grupoDe(idComp, sustitucionesMap);
         const opciones = filasPorGrupo[grupo] || [];
 
+        // NUEVO: stock físico ya disponible de este componente (hoja Stock_Almacen). "Cantidad a
+        // pedir" arranca en "cantidad necesaria" MENOS ese stock (nunca por debajo de 0 -- si ya
+        // hay de sobra no tiene sentido pedir en negativo), pero sigue siendo editable como antes
+        // por si el usuario quiere pedir otra cantidad (p.ej. para llegar a un tramo de precio
+        // mejor, o comprar de más aunque ya tenga algo).
+        const stockDisponible = stockPorId[idComp] || 0;
+        const cantidadPedidaInicial = Math.max(0, cantidadNecesaria - stockDisponible);
+
         // MODIFICADO: el "name" del grupo de radios ahora es por GRUPO (no por fila) -- así, si
         // el componente y su sustituto ocupan dos <tr> distintas, sus radios comparten el mismo
         // atributo "name" HTML y el navegador aplica exclusión mutua nativa ENTRE las dos filas
@@ -341,14 +360,13 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
         // desmarca automáticamente cualquier opción marcada en su fila pareja.
         const nombreGrupo = `pedido-opcion-grupo-${escapeAttr(grupo)}`;
 
-        // NUEVO: "cantidad a pedir" arranca igual que "cantidad necesaria" pero es editable por
-        // el usuario (input aparte, ver más abajo) -- el precio de cada opción se calcula SIEMPRE
-        // con esta cantidad (editable), no con la necesaria, para que al cambiarla los datos
-        // salgan más aproximados a lo que realmente se va a pagar.
+        // NUEVO: el precio de cada opción se calcula SIEMPRE con "Cantidad a pedir" (editable,
+        // arranca en necesaria-menos-stock), no con la cantidad necesaria bruta, para que los
+        // datos salgan más aproximados a lo que realmente se va a pagar.
         const opcionesConDatos = opciones
             .map(opt => {
                 const tiers = (tiersPorProveedor[opt.proveedor] && tiersPorProveedor[opt.proveedor][opt.literalId]) || [];
-                const compra = calcularMejorCompra(tiers, cantidadNecesaria);
+                const compra = calcularMejorCompra(tiers, cantidadPedidaInicial);
                 const hayStock = tiers.some(t => t.stockPacks > 0);
                 return Object.assign({}, opt, { compra, hayStock });
             })
@@ -372,7 +390,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
         const opcionesHtml = opcionesConDatos.length === 0
             ? '<span style="color:var(--danger); font-size:12px;">Componente no encontrado en Componentes</span>'
             : opcionesConDatos.map(opt => {
-                const usable = opt.hayStock && opt.compra.desglose.length > 0;
+                const usable = cantidadPedidaInicial > 0 && opt.hayStock && opt.compra.desglose.length > 0;
                 const disabled = !usable ? 'disabled' : '';
                 let checked = '';
                 if (usable && opt.proveedor === proveedorPreseleccionado && !preseleccionadoPorGrupo[grupo]) {
@@ -381,32 +399,12 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                 }
                 const etiquetaProveedor = ETIQUETA_PROVEEDOR[opt.proveedor] || opt.proveedor;
                 const etiquetaMarca = opt.marca ? ` — ${opt.marca}` : '';
-
-                let textoCompra;
-                let colorTexto = '';
-                // MODIFICADO (fix): el desglose ahora es "cantidad a precio/ud (tramo desde X uds)"
-                // en vez de "packs×tamaño" -- ya no se compra en packs enteros, se compra la
-                // cantidad exacta al precio por unidad del tramo aplicable (ver calcularMejorCompra).
-                // MODIFICADO (fix): el PRECIO POR UNIDAD se muestra con 4 decimales (como LCSC/TME
-                // en sus propias fichas de producto, ej. "€ 0.0759"), no con 2 -- redondear un
-                // precio/unidad tan pequeño a 2 decimales (0,09€/ud) hacía que multiplicarlo a mano
-                // por la cantidad no cuadrase con el total real (70×0,09=6,30 vs el total correcto
-                // de 5,96€), pareciendo un error de cálculo cuando el cálculo interno sí era exacto
-                // -- solo la cifra mostrada del precio/unidad estaba de más redondeada. El TOTAL en
-                // € sí se sigue mostrando a 2 decimales (formatearPrecioLocal), como cualquier importe.
-                const desgloseTexto = opt.compra.desglose
-                    .map(d => `${d.unidades} uds a ${formatearPrecioUnitarioLocal(d.precioUnitario)}€/ud (tramo ≥${d.udsPack}u)`)
-                    .join(' + ');
-                if (!opt.hayStock || opt.compra.desglose.length === 0) {
-                    textoCompra = 'Sin stock disponible';
-                    colorTexto = 'color:var(--danger);';
-                } else {
-                    textoCompra = `${desgloseTexto} = ${formatearPrecioLocal(opt.compra.totalPrecio)}€`;
-                    if (!opt.compra.logrado) {
-                        textoCompra += ' ⚠️ no cubre toda la cantidad (stock insuficiente)';
-                        colorTexto = 'color:#eab308;';
-                    }
-                }
+                // MODIFICADO: el texto/color de cada opción (desglose, "sin stock", "cubierto con
+                // stock"...) ahora sale de textoYColorOpcion() -- misma función que usa
+                // actualizarFilaPorCantidad() al editar "Cantidad a pedir", para que el resultado
+                // sea idéntico se calcule cuando se calcule.
+                const { desgloseTexto, texto: textoCompra, color: colorTexto } =
+                    textoYColorOpcion(opt.compra, opt.hayStock, cantidadPedidaInicial);
 
                 // NUEVO: data-literal-id y data-marca permiten recalcular esta misma opción más
                 // tarde (cuando el usuario edite "Cantidad a pedir") sin tener que regenerar todo
@@ -442,14 +440,15 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
 
         filasHtml += `
             <tr data-fila-pedido="${indiceFila}" data-cantidad-necesaria="${cantidadNecesaria}"
-                data-cantidad-pedida="${cantidadNecesaria}"
+                data-cantidad-pedida="${cantidadPedidaInicial}"
                 data-grupo="${escapeAttr(grupo)}" data-id-componente="${escapeAttr(idComp)}"
                 class="${tienePareja ? 'fila-con-pareja' : ''}">
                 <td>${idComp}${iconoPareja}</td>
                 <td>${cantidadNecesaria}</td>
+                <td>${formatearCantidadLocal(stockDisponible)}</td>
                 <td>
-                    <input type="number" class="pedido-input-cantidad-pedida" value="${cantidadNecesaria}" min="0" step="any"
-                        title="Por defecto es igual a la cantidad necesaria -- edítala si quieres pedir otra cantidad (p.ej. para llegar al mínimo de un tramo de precio, o comprar de más)."
+                    <input type="number" class="pedido-input-cantidad-pedida" value="${cantidadPedidaInicial}" min="0" step="any"
+                        title="Por defecto es la cantidad necesaria menos el stock que ya tienes -- edítala si quieres pedir otra cantidad (p.ej. para llegar al mínimo de un tramo de precio, o comprar de más)."
                         style="width:80px; padding:4px 6px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px;">
                 </td>
                 <td>${opcionesHtml}</td>
@@ -459,13 +458,14 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     contenedor.innerHTML = `
-        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). "Cantidad a pedir" empieza igual que "Cantidad necesaria" pero puedes editarla libremente -- el precio se recalcula al momento. Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen. "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
                     <tr>
                         <th>Componente</th>
                         <th>Cantidad necesaria</th>
+                        <th>Stock disponible</th>
                         <th>Cantidad a pedir</th>
                         <th>Proveedor a pedir</th>
                         <th>Desglose de compra</th>
@@ -493,24 +493,47 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     recalcularPedido();
 }
 
+// NUEVO: dado el resultado de calcularMejorCompra() para UNA opción de proveedor, decide qué
+// texto y color mostrar -- misma lógica usada tanto en el render inicial de la tabla como en
+// actualizarFilaPorCantidad() (al editar "Cantidad a pedir"), para que ambos caminos den
+// exactamente el mismo resultado. "cantidadPedida === 0" es un caso válido y distinto de "sin
+// stock": significa que el stock que ya tienes cubre toda la necesidad y no hace falta pedir nada.
+function textoYColorOpcion(compra, hayStock, cantidadPedida) {
+    const desgloseTexto = compra.desglose
+        .map(d => `${d.unidades} uds a ${formatearPrecioUnitarioLocal(d.precioUnitario)}€/ud (tramo ≥${d.udsPack}u)`)
+        .join(' + ');
+    if (cantidadPedida <= 0) {
+        return { desgloseTexto: '', texto: '📦 Cubierto con el stock que ya tienes', color: 'color:var(--text-secondary);' };
+    }
+    if (!hayStock || compra.desglose.length === 0) {
+        return { desgloseTexto, texto: 'Sin stock disponible', color: 'color:var(--danger);' };
+    }
+    let texto = `${desgloseTexto} = ${formatearPrecioLocal(compra.totalPrecio)}€`;
+    let color = '';
+    if (!compra.logrado) {
+        texto += ' ⚠️ no cubre toda la cantidad (stock insuficiente)';
+        color = 'color:#eab308;';
+    }
+    return { desgloseTexto, texto, color };
+}
+
 // NUEVO: recalcula el precio/desglose de TODAS las opciones (proveedores) de una fila cuando el
 // usuario cambia manualmente su "Cantidad a pedir" -- reutiliza calcularMejorCompra() con la
-// nueva cantidad en vez de la "cantidad necesaria" original, y actualiza en el DOM tanto los
-// atributos data-* de cada radio (que lee recalcularPedido) como el texto visible de cada opción,
-// conservando qué radio tenía marcado el usuario (o desmarcándolo si deja de ser viable con la
-// nueva cantidad).
+// nueva cantidad en vez de la cantidad inicial (necesaria menos stock), y actualiza en el DOM
+// tanto los atributos data-* de cada radio (que lee recalcularPedido) como el texto visible de
+// cada opción, conservando qué radio tenía marcado el usuario (o desmarcándolo si deja de ser
+// viable con la nueva cantidad). Un valor de 0 es válido (ver textoYColorOpcion) -- solo se
+// ignora mientras el campo está vacío o con un valor negativo/inválido, típico de estar
+// escribiendo/borrando a mano.
 function actualizarFilaPorCantidad(tr) {
     if (!tr) return;
     const inputCantidad = tr.querySelector('.pedido-input-cantidad-pedida');
     if (!inputCantidad || !cacheDatosPedido) return;
 
-    let cantidadPedida = parseNumeroES(inputCantidad.value);
-    if (cantidadPedida <= 0) {
-        // Cantidad inválida o vacía mientras el usuario sigue escribiendo -- no recalculamos
-        // todavía (evita parpadeos a "sin stock" en cada pulsación de borrado), pero tampoco
-        // dejamos datos de una cantidad anterior engañando al resumen.
-        return;
-    }
+    const bruto = inputCantidad.value.trim();
+    if (bruto === '') return; // sigue escribiendo/borrando -- no recalculamos todavía
+    const cantidadPedida = parseNumeroES(bruto);
+    if (cantidadPedida < 0) return; // valor inválido, no recalculamos
 
     const { tiersPorProveedor } = cacheDatosPedido;
 
@@ -521,7 +544,7 @@ function actualizarFilaPorCantidad(tr) {
         const tiers = (tiersPorProveedor[proveedor] && tiersPorProveedor[proveedor][literalId]) || [];
         const compra = calcularMejorCompra(tiers, cantidadPedida);
         const hayStock = tiers.some(t => t.stockPacks > 0);
-        const usable = hayStock && compra.desglose.length > 0;
+        const usable = cantidadPedida > 0 && hayStock && compra.desglose.length > 0;
 
         radio.disabled = !usable;
         if (!usable) radio.checked = false;
@@ -529,9 +552,8 @@ function actualizarFilaPorCantidad(tr) {
         radio.setAttribute('data-total-precio', compra.totalPrecio);
         radio.setAttribute('data-logrado', compra.logrado);
 
-        const desgloseTexto = compra.desglose
-            .map(d => `${d.unidades} uds a ${formatearPrecioUnitarioLocal(d.precioUnitario)}€/ud (tramo ≥${d.udsPack}u)`)
-            .join(' + ');
+        const { desgloseTexto, texto: textoCompra, color: colorTexto } =
+            textoYColorOpcion(compra, hayStock, cantidadPedida);
         radio.setAttribute('data-desglose', desgloseTexto);
 
         const label = radio.closest('label');
@@ -540,18 +562,6 @@ function actualizarFilaPorCantidad(tr) {
         if (spanTexto) {
             const etiquetaProveedor = ETIQUETA_PROVEEDOR[proveedor] || proveedor;
             const etiquetaMarca = marca ? ` — ${marca}` : '';
-            let textoCompra;
-            let colorTexto = '';
-            if (!hayStock || compra.desglose.length === 0) {
-                textoCompra = 'Sin stock disponible';
-                colorTexto = 'color:var(--danger);';
-            } else {
-                textoCompra = `${desgloseTexto} = ${formatearPrecioLocal(compra.totalPrecio)}€`;
-                if (!compra.logrado) {
-                    textoCompra += ' ⚠️ no cubre toda la cantidad (stock insuficiente)';
-                    colorTexto = 'color:#eab308;';
-                }
-            }
             spanTexto.setAttribute('style', colorTexto);
             spanTexto.textContent = `${etiquetaProveedor}${etiquetaMarca} — ${textoCompra}`;
         }
@@ -596,7 +606,18 @@ function recalcularPedido() {
         const grupo = tr.getAttribute('data-grupo');
 
         if (!radioSeleccionado) {
-            tr.classList.remove('row-danger', 'row-warning', 'row-cubierta-pareja');
+            tr.classList.remove('row-danger', 'row-warning', 'row-cubierta-pareja', 'row-cubierta-stock');
+            const cantidadPedida = parseFloat(tr.getAttribute('data-cantidad-pedida'));
+            if (!isNaN(cantidadPedida) && cantidadPedida <= 0) {
+                // NUEVO: no es un error -- ya tienes stock suficiente para este componente, así
+                // que no hace falta elegir proveedor ni contarlo como pendiente (a menos que el
+                // usuario edite "Cantidad a pedir" a mano y pida algo de todos modos).
+                totalComponentes++;
+                if (celdaPacks) celdaPacks.textContent = '📦 cubierto con stock';
+                if (celdaPrecio) celdaPrecio.textContent = `${formatearPrecioLocal(0)}€`;
+                tr.classList.add('row-cubierta-stock');
+                return;
+            }
             if (grupo && gruposConSeleccion.has(grupo)) {
                 // NUEVO: no es un error de verdad -- su pareja ya cubre esta necesidad, así que
                 // esta fila no suma como un componente aparte en el recuento total (evidentemente
@@ -616,7 +637,7 @@ function recalcularPedido() {
 
         totalComponentes++;
         const logrado = radioSeleccionado.getAttribute('data-logrado') === 'true';
-        tr.classList.remove('row-danger', 'row-cubierta-pareja');
+        tr.classList.remove('row-danger', 'row-cubierta-pareja', 'row-cubierta-stock');
         tr.classList.toggle('row-warning', !logrado);
         if (!logrado) componentesParciales++;
 
@@ -723,6 +744,14 @@ function renderDesglosePorTienda(porTienda) {
 
 function formatearPrecioLocal(n) {
     return (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
+}
+
+// NUEVO: para la columna "Stock disponible" -- se muestra como número entero si lo es (caso
+// normal, unidades de componentes), y con hasta 2 decimales si por lo que sea viene fraccionado
+// en Stock_Almacen, sin arrastrar ceros de más (parseNumeroES ya redondea a lo que haya escrito).
+function formatearCantidadLocal(n) {
+    if (Number.isInteger(n)) return String(n);
+    return (Math.round(n * 100) / 100).toString().replace('.', ',');
 }
 
 // NUEVO (fix): para precios POR UNIDAD (no importes totales) se usan 4 decimales, igual que
