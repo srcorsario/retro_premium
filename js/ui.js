@@ -269,6 +269,11 @@ function formatearPrecioUnitarioLocal(n) {
     return (Math.round(n * 10000) / 10000).toFixed(4).replace('.', ',');
 }
 
+// NUEVO: etiqueta corta de proveedor para el popup de desglose de precio de Kits -- mismo
+// mapeo que ETIQUETA_PROVEEDOR en pedido.js, duplicado aquí para no importar entre módulos solo
+// por esto (mismo criterio que ya se usa con formatearPrecioLocal/formatearPrecioUnitarioLocal).
+const ETIQUETA_PROVEEDOR_KIT = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME' };
+
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
 // NUEVO: 2º parámetro opcional "visibleHeaders" -- si se pasa, la tabla interna de cada kit
 // solo muestra esas columnas (mismo checkbox de visibilidad que ya existe en Componentes).
@@ -308,32 +313,45 @@ function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit) {
                 precioHtml = ` <span style="font-size:0.85rem; font-weight:normal; color:${colorPrecio};">💰 ${formatearPrecioLocal(precioInfo.total)}€${precioInfo.incompleto ? ' ⚠️' : ''}</span>`;
 
                 // NUEVO: al pasar el ratón por el NOMBRE del kit (no por todo el bloque) aparece
-                // un popup con el desglose línea a línea -- ver .kit-nombre-tooltip en CSS. Las
-                // filas sin precio (ningún literal del grupo tenía Precio_Unitario) se marcan en
-                // rojo con "sin precio" en vez de un importe, para que se note por qué el total
-                // no incluye ese componente.
+                // un popup con el desglose línea a línea -- ver .kit-nombre-tooltip en CSS.
+                // MODIFICADO 2026-09-07: cada línea ahora también muestra el proveedor elegido
+                // (preselección TME, ver calcularPreciosPorKit en app.js) y su parte prorrateada
+                // de envío/aduanas de ese proveedor, aparte del coste del propio componente.
+                // Casos especiales: "📦 cubierto con stock" (no hace falta comprarlo, stock físico
+                // ya lo cubre) y filas sin precio (ningún literal del grupo tenía Precio_Unitario),
+                // marcadas en rojo con "sin precio" en vez de un importe.
                 const filasDesglose = precioInfo.desglose.map(d => {
                     if (d.subtotal === null) {
                         return `<tr>
                             <td style="color:var(--danger);">${d.idComp}</td>
-                            <td colspan="2" style="text-align:right; color:var(--danger);">sin precio</td>
+                            <td colspan="3" style="text-align:right; color:var(--danger);">sin precio</td>
+                        </tr>`;
+                    }
+                    if (d.cubiertoStock) {
+                        return `<tr>
+                            <td>${d.idComp}</td>
+                            <td colspan="2" style="text-align:right; color:var(--success);">📦 cubierto con stock</td>
+                            <td style="text-align:right; font-weight:bold;">${formatearPrecioLocal(0)}€</td>
                         </tr>`;
                     }
                     const avisoStock = d.sinStock ? ' ⚠️' : '';
+                    const etiquetaProveedor = ETIQUETA_PROVEEDOR_KIT[d.proveedor] || d.proveedor || '';
+                    const envioTexto = d.envioProrrateado > 0 ? `+${formatearPrecioLocal(d.envioProrrateado)}€ envío` : '—';
                     return `<tr>
-                        <td>${d.idComp}${avisoStock}</td>
+                        <td>${d.idComp} <span style="color:var(--text-secondary);">(${etiquetaProveedor})</span>${avisoStock}</td>
                         <td style="text-align:right; color:var(--text-secondary);">${d.cantidad} × ${formatearPrecioUnitarioLocal(d.precioUnitario)}€</td>
+                        <td style="text-align:right; color:var(--text-secondary);">${envioTexto}</td>
                         <td style="text-align:right; font-weight:bold;">${formatearPrecioLocal(d.subtotal)}€</td>
                     </tr>`;
                 }).join('');
 
                 const popupHtml = `
                     <div class="kit-tooltip-popup">
-                        <div style="font-weight:bold; margin-bottom:6px; white-space:normal;">💰 Desglose de ${nombreKit}${precioInfo.incompleto ? ' <span style="color:#eab308; font-weight:normal;">(orientativo -- ⚠️ = sin stock real ahora mismo)</span>' : ''}</div>
+                        <div style="font-weight:bold; margin-bottom:6px; white-space:normal;">💰 Desglose de ${nombreKit} <span style="font-weight:normal; color:var(--text-secondary);">(incluye envío/aduanas prorrateados)</span>${precioInfo.incompleto ? ' <span style="color:#eab308; font-weight:normal;">(orientativo -- ⚠️ = sin stock real ahora mismo)</span>' : ''}</div>
                         <table style="width:100%;"><tbody>
                             ${filasDesglose}
                             <tr style="border-top:1px solid var(--border-color);">
-                                <td colspan="2" style="text-align:right; padding-top:6px;">Total:</td>
+                                <td colspan="3" style="text-align:right; padding-top:6px;">Total:</td>
                                 <td style="text-align:right; font-weight:bold; padding-top:6px;">${formatearPrecioLocal(precioInfo.total)}€</td>
                             </tr>
                         </tbody></table>

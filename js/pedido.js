@@ -25,7 +25,9 @@ const ETIQUETA_PROVEEDOR = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME' 
 // (ver [[retro-componentes-web]] sobre FedEx/DHL/UPS) suele salir más económico en conjunto.
 // Si TME no tiene stock suficiente para cubrir la cantidad pedida, se cae al resto en el orden
 // habitual (LCSC, luego AliExpress).
-const ORDEN_PRESELECCION = ['TME', 'LCSC', 'ALIEXPRESS'];
+// NUEVO: exportado -- app.js lo reutiliza para el precio estimado de Kits (misma preselección
+// que en el generador de pedido, en vez de reinventar el orden ahí).
+export const ORDEN_PRESELECCION = ['TME', 'LCSC', 'ALIEXPRESS'];
 
 // NUEVO: Gastos de envío fijos por tienda (de momento a mano; el día que se quiera afinar por
 // pedido real se pueden leer de la hoja "Gastos_Extra" en vez de estos valores fijos).
@@ -41,8 +43,9 @@ const GASTOS_ENVIO = {
 };
 
 // NUEVO: total de gastos (envío + aduanas) de un proveedor, para no repetir la suma en cada sitio
-// que lo necesite.
-function totalGastosEnvio(proveedor) {
+// que lo necesite. Exportado -- también lo usa app.js para prorratear el envío en el precio
+// estimado de Kits.
+export function totalGastosEnvio(proveedor) {
     const g = GASTOS_ENVIO[proveedor];
     if (!g) return 0;
     return (g.envio || 0) + (g.aduanas || 0);

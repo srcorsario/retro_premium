@@ -140,8 +140,8 @@ td {
     padding: 10px 12px;
     font-size: 12px;
     font-weight: normal;
-    min-width: 240px;
-    max-width: 380px;
+    min-width: 260px;
+    max-width: 440px;
     white-space: normal;
     box-shadow: 0 6px 16px rgba(0,0,0,0.4);
     cursor: default;

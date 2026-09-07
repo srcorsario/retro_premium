@@ -3,7 +3,7 @@ import ENV from './config.js';
 import { obtenerDatos } from './api.js';
 import { renderTabla, mostrarMensaje } from './ui.js';
 import { inicializarModuloPedidos } from './pedidos.js';
-import { inicializarModuloPedido } from './pedido.js'; // NUEVO: generador de pedido
+import { inicializarModuloPedido, ORDEN_PRESELECCION, totalGastosEnvio } from './pedido.js'; // NUEVO: generador de pedido
 
 // Variable para saber qué pestaña estamos viendo
 let vistaActual = 'Componentes';
@@ -65,7 +65,23 @@ function parseNumeroES(valor) {
 // límite)" y, si TODAS las opciones de un componente están así, se usa igualmente el precio de
 // referencia más barato pero se marca el kit entero como "incompleto" (precio orientativo, no
 // 100% comprable ahora mismo con lo que hay en stock).
-function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones) {
+// MODIFICADO 2026-09-07 (a petición del usuario -- "aplícale todos los costes prorrateados,
+// teniendo en cuenta el proveedor de cada artículo, teniendo en cuenta el predeterminado y/o el
+// stock"): el precio de un kit ya no es solo "componente × precio/ud más barato entre proveedores".
+// Ahora, por cada componente:
+//   1. Se resta el stock físico que ya haya en el almacén (Stock_Almacen) -- si cubre toda la
+//      necesidad, ese componente sale gratis en el kit (no hace falta comprarlo), igual que
+//      "Cantidad a pedir" en el generador de pedido.
+//   2. El proveedor se elige con la MISMA preselección que el generador de pedido (ORDEN_PRESELECCION,
+//      TME primero) en vez de "el más barato" -- solo se cae a LCSC/AliExpress si TME no tiene esa
+//      opción disponible ahora mismo. Si ningún proveedor tiene stock real, se usa la opción de
+//      referencia más barata (como antes) y el kit se marca "incompleto".
+//   3. Los gastos de envío/aduanas (GASTOS_ENVIO, ver pedido.js) de cada proveedor realmente usado
+//      en el kit se suman UNA vez por proveedor y se PRORRATEAN entre sus componentes de ese kit,
+//      proporcionalmente a lo que cuesta cada uno (el componente más caro de ese proveedor absorbe
+//      más parte del envío) -- así el total del kit refleja el coste real aproximado, no solo el
+//      precio de los componentes sueltos.
+function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, stockPorId) {
     const sustitucionesMap = {}; // ID_Nuevo -> ID_Original
     (sustituciones || []).forEach(row => {
         const idNuevo = (row['ID_Nuevo'] || '').trim();
@@ -75,28 +91,57 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones) {
     const grupoDe = (id) => sustitucionesMap[id] || id;
 
     // Por cada ID_Componente literal, todas sus opciones de precio (una por proveedor que lo
-    // tenga registrado en Componentes), con si esa opción concreta está sin stock ahora mismo.
+    // tenga registrado en Componentes), con su proveedor y si esa opción concreta está sin stock
+    // ahora mismo (necesario para poder preseleccionar TME en vez de "el más barato").
     const opcionesPorLiteralId = {};
     (datosComponentes || []).forEach(row => {
         const literalId = (row['ID_Componente'] || '').trim();
         if (!literalId) return;
+        const proveedor = (row['Proveedor_Preferido'] || '').trim().toUpperCase();
+        if (!proveedor) return;
         const precioUnitario = parseNumeroES(row['Precio_Unitario']);
         if (precioUnitario <= 0) return; // sin dato de precio en absoluto para esta fila
         const precioPackTexto = String(row['Precio_Pack'] || '').toLowerCase();
         const sinStock = precioPackTexto.includes('sin stock') || precioPackTexto.includes('no disponible') || precioPackTexto.includes('fuera de l');
         if (!opcionesPorLiteralId[literalId]) opcionesPorLiteralId[literalId] = [];
-        opcionesPorLiteralId[literalId].push({ precioUnitario, sinStock });
+        opcionesPorLiteralId[literalId].push({ proveedor, precioUnitario, sinStock });
     });
 
-    // Mejor precio/ud para un literalId: prioriza opciones CON stock; solo si NINGUNA de sus
-    // opciones tiene stock ahora mismo, cae al precio de referencia más barato entre las que hay.
-    function mejorPrecioLiteral(literalId) {
-        const opciones = opcionesPorLiteralId[literalId];
+    // NUEVO: resuelve UN literalId a la cantidad que realmente hace falta comprar (restando el
+    // stock físico que ya se tenga) y al proveedor elegido (preselección TME, con fallback al más
+    // barato de referencia si nadie tiene stock real). Devuelve null si el literalId no tiene
+    // ningún precio registrado en absoluto.
+    function resolverComponente(idComp, cantidadNecesaria) {
+        const stockDisponible = (stockPorId && stockPorId[idComp]) || 0;
+        const cantidadAPedir = Math.max(0, cantidadNecesaria - stockDisponible);
+
+        if (cantidadAPedir <= 0) {
+            return { idComp, cantidadAPedir: 0, proveedor: null, precioUnitario: 0, coste: 0, sinStock: false, cubiertoStock: true };
+        }
+
+        const opciones = opcionesPorLiteralId[idComp];
         if (!opciones || opciones.length === 0) return null;
-        const conStock = opciones.filter(o => !o.sinStock);
-        const candidatas = conStock.length > 0 ? conStock : opciones;
-        const mejor = candidatas.reduce((a, b) => (b.precioUnitario < a.precioUnitario ? b : a));
-        return { precioUnitario: mejor.precioUnitario, sinStock: conStock.length === 0 };
+
+        let elegida = null;
+        for (const proveedor of ORDEN_PRESELECCION) {
+            const opt = opciones.find(o => o.proveedor === proveedor && !o.sinStock);
+            if (opt) { elegida = opt; break; }
+        }
+        if (!elegida) {
+            // Ningún proveedor tiene esta opción disponible ahora mismo -- usamos la más barata de
+            // referencia entre las que haya (como antes de este cambio), marcando "sinStock".
+            elegida = opciones.reduce((a, b) => (b.precioUnitario < a.precioUnitario ? b : a));
+        }
+
+        return {
+            idComp,
+            cantidadAPedir,
+            proveedor: elegida.proveedor,
+            precioUnitario: elegida.precioUnitario,
+            coste: elegida.precioUnitario * cantidadAPedir,
+            sinStock: elegida.sinStock,
+            cubiertoStock: false
+        };
     }
 
     const filasPorKit = {};
@@ -121,32 +166,44 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones) {
             porGrupo[grupo].push({ idComp, cantidad });
         });
 
-        let total = 0;
+        let totalArticulos = 0;
         let incompleto = false;
         // NUEVO: además del total, guardamos el desglose por componente (uno por grupo) para el
         // popup que aparece al pasar el ratón por el nombre del kit -- ver renderKitsAgrupados.
         const desglose = [];
+        // NUEVO: coste (sin envío) acumulado por proveedor DENTRO de este kit -- base para
+        // prorratear su gasto de envío proporcionalmente entre sus componentes.
+        const costesPorProveedor = {};
+
         Object.values(porGrupo).forEach(opcionesGrupo => {
             // De entre el componente y su(s) sustituto(s), nos quedamos con la opción más barata
-            // -- ya multiplicada por SU propia cantidad (que puede diferir de la de su pareja).
+            // ya resuelta (proveedor preseleccionado + cantidad menos stock) -- multiplicada por
+            // SU propia cantidad (que puede diferir de la de su pareja).
             let mejorOpcion = null;
             opcionesGrupo.forEach(({ idComp, cantidad }) => {
-                const precio = mejorPrecioLiteral(idComp);
-                if (!precio) return;
-                const coste = precio.precioUnitario * cantidad;
-                if (!mejorOpcion || coste < mejorOpcion.coste) {
-                    mejorOpcion = { idComp, cantidad, precioUnitario: precio.precioUnitario, coste, sinStock: precio.sinStock };
+                const resuelto = resolverComponente(idComp, cantidad);
+                if (!resuelto) return;
+                if (!mejorOpcion || resuelto.coste < mejorOpcion.coste) {
+                    mejorOpcion = { ...resuelto, cantidad };
                 }
             });
             if (mejorOpcion) {
-                total += mejorOpcion.coste;
+                totalArticulos += mejorOpcion.coste;
                 if (mejorOpcion.sinStock) incompleto = true;
+                if (mejorOpcion.proveedor && mejorOpcion.coste > 0) {
+                    costesPorProveedor[mejorOpcion.proveedor] = (costesPorProveedor[mejorOpcion.proveedor] || 0) + mejorOpcion.coste;
+                }
                 desglose.push({
                     idComp: mejorOpcion.idComp,
                     cantidad: mejorOpcion.cantidad,
+                    cantidadAPedir: mejorOpcion.cantidadAPedir,
+                    proveedor: mejorOpcion.proveedor,
                     precioUnitario: mejorOpcion.precioUnitario,
+                    costeArticulo: mejorOpcion.coste,
+                    envioProrrateado: 0, // se rellena más abajo, una vez sumado todo el kit
                     subtotal: mejorOpcion.coste,
-                    sinStock: mejorOpcion.sinStock
+                    sinStock: mejorOpcion.sinStock,
+                    cubiertoStock: mejorOpcion.cubiertoStock
                 });
             } else {
                 // Ningún literal del grupo tiene precio -- no se puede sumar. Se deja constancia
@@ -156,12 +213,36 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones) {
                 desglose.push({
                     idComp: opcionesGrupo.map(o => o.idComp).join(' / '),
                     cantidad: opcionesGrupo[0] ? opcionesGrupo[0].cantidad : 0,
+                    cantidadAPedir: null,
+                    proveedor: null,
                     precioUnitario: null,
+                    costeArticulo: null,
+                    envioProrrateado: null,
                     subtotal: null,
-                    sinStock: true
+                    sinStock: true,
+                    cubiertoStock: false
                 });
             }
         });
+
+        // NUEVO: gastos de envío/aduanas -- una vez por proveedor realmente usado en este kit
+        // (GASTOS_ENVIO/totalGastosEnvio de pedido.js), prorrateados entre sus componentes
+        // proporcionalmente a lo que cuesta cada uno dentro de ese proveedor.
+        let totalEnvio = 0;
+        Object.entries(costesPorProveedor).forEach(([proveedor, costeProveedor]) => {
+            const envio = totalGastosEnvio(proveedor);
+            if (envio <= 0 || costeProveedor <= 0) return;
+            totalEnvio += envio;
+            desglose.forEach(d => {
+                if (d.proveedor === proveedor && d.costeArticulo > 0) {
+                    const parte = (d.costeArticulo / costeProveedor) * envio;
+                    d.envioProrrateado = parte;
+                    d.subtotal = d.costeArticulo + parte;
+                }
+            });
+        });
+
+        const total = totalArticulos + totalEnvio;
 
         desglose.sort((a, b) => a.idComp.localeCompare(b.idComp, 'es', { sensitivity: 'base' }));
         resultado[idKit] = { total, incompleto, desglose };
@@ -211,8 +292,9 @@ async function cargarVista(nombrePestana) {
     }
 
     // NUEVO: en la pestaña Kits calculamos también el precio total estimado de cada uno (ver
-    // calcularPreciosPorKit) -- necesita Componentes (precios) y Sustituciones (para no contar
-    // dos veces un componente y su sustituto).
+    // calcularPreciosPorKit) -- necesita Componentes (precios), Sustituciones (para no contar
+    // dos veces un componente y su sustituto) y Stock_Almacen (para restar el stock físico ya
+    // disponible antes de calcular qué haría falta comprar de verdad, igual que en pedido.js).
     let extra;
     if (nombrePestana === 'Kits_Consolas') {
         const datosComponentes = await obtenerDatos('Componentes');
@@ -220,7 +302,14 @@ async function cargarVista(nombrePestana) {
         if (ENV.SHEETS['Sustituciones']) {
             sustituciones = await obtenerDatos('Sustituciones');
         }
-        extra = { preciosPorKit: calcularPreciosPorKit(datos, datosComponentes, sustituciones) };
+        const datosStock = await obtenerDatos('Stock_Almacen');
+        const stockPorId = {};
+        datosStock.forEach(row => {
+            const id = (row['ID_Componente'] || '').trim();
+            if (!id) return;
+            stockPorId[id] = (stockPorId[id] || 0) + parseNumeroES(row['Uds_Disponibles']);
+        });
+        extra = { preciosPorKit: calcularPreciosPorKit(datos, datosComponentes, sustituciones, stockPorId) };
     }
 
     renderTabla('contenedor-tabla', datos, nombrePestana, extra);
