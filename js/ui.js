@@ -263,6 +263,12 @@ function formatearPrecioLocal(n) {
     return (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
 }
 
+// NUEVO: precio POR UNIDAD a 4 decimales (igual que en pedido.js y en toda la web) -- con 2
+// decimales un precio/ud pequeño se ve redondeado y no cuadra al multiplicarlo a mano.
+function formatearPrecioUnitarioLocal(n) {
+    return (Math.round(n * 10000) / 10000).toFixed(4).replace('.', ',');
+}
+
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
 // NUEVO: 2º parámetro opcional "visibleHeaders" -- si se pasa, la tabla interna de cada kit
 // solo muestra esas columnas (mismo checkbox de visibilidad que ya existe en Componentes).
@@ -296,15 +302,47 @@ function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit) {
             // mismo y se ha usado su precio de referencia), en verde si el precio es 100% real.
             const precioInfo = preciosPorKit && preciosPorKit[nombreKit];
             let precioHtml = '';
+            let nombreKitHtml = `📝 ${nombreKit}`;
             if (precioInfo) {
                 const colorPrecio = precioInfo.incompleto ? '#eab308' : 'var(--success)';
-                const tituloPrecio = precioInfo.incompleto
-                    ? 'Precio orientativo: algún componente de este kit no tiene stock real ahora mismo, se ha usado su precio de referencia'
-                    : 'Precio estimado sumando cantidad × precio/ud más barato disponible de cada componente (sin repetir pareja componente+sustituto)';
-                precioHtml = ` <span style="font-size:0.85rem; font-weight:normal; color:${colorPrecio};" title="${tituloPrecio}">💰 ${formatearPrecioLocal(precioInfo.total)}€${precioInfo.incompleto ? ' ⚠️' : ''}</span>`;
+                precioHtml = ` <span style="font-size:0.85rem; font-weight:normal; color:${colorPrecio};">💰 ${formatearPrecioLocal(precioInfo.total)}€${precioInfo.incompleto ? ' ⚠️' : ''}</span>`;
+
+                // NUEVO: al pasar el ratón por el NOMBRE del kit (no por todo el bloque) aparece
+                // un popup con el desglose línea a línea -- ver .kit-nombre-tooltip en CSS. Las
+                // filas sin precio (ningún literal del grupo tenía Precio_Unitario) se marcan en
+                // rojo con "sin precio" en vez de un importe, para que se note por qué el total
+                // no incluye ese componente.
+                const filasDesglose = precioInfo.desglose.map(d => {
+                    if (d.subtotal === null) {
+                        return `<tr>
+                            <td style="color:var(--danger);">${d.idComp}</td>
+                            <td colspan="2" style="text-align:right; color:var(--danger);">sin precio</td>
+                        </tr>`;
+                    }
+                    const avisoStock = d.sinStock ? ' ⚠️' : '';
+                    return `<tr>
+                        <td>${d.idComp}${avisoStock}</td>
+                        <td style="text-align:right; color:var(--text-secondary);">${d.cantidad} × ${formatearPrecioUnitarioLocal(d.precioUnitario)}€</td>
+                        <td style="text-align:right; font-weight:bold;">${formatearPrecioLocal(d.subtotal)}€</td>
+                    </tr>`;
+                }).join('');
+
+                const popupHtml = `
+                    <div class="kit-tooltip-popup">
+                        <div style="font-weight:bold; margin-bottom:6px; white-space:normal;">💰 Desglose de ${nombreKit}${precioInfo.incompleto ? ' <span style="color:#eab308; font-weight:normal;">(orientativo -- ⚠️ = sin stock real ahora mismo)</span>' : ''}</div>
+                        <table style="width:100%;"><tbody>
+                            ${filasDesglose}
+                            <tr style="border-top:1px solid var(--border-color);">
+                                <td colspan="2" style="text-align:right; padding-top:6px;">Total:</td>
+                                <td style="text-align:right; font-weight:bold; padding-top:6px;">${formatearPrecioLocal(precioInfo.total)}€</td>
+                            </tr>
+                        </tbody></table>
+                    </div>`;
+
+                nombreKitHtml = `<span class="kit-nombre-tooltip">📝 ${nombreKit}${popupHtml}</span>`;
             }
             htmlTotal += `<div class="kit-toggle" onclick="this.classList.toggle('active'); this.nextElementSibling.classList.toggle('hidden');">`;
-            htmlTotal += `<span>📝 ${nombreKit}${precioHtml}</span> <span class="arrow">▶</span>`;
+            htmlTotal += `<span>${nombreKitHtml}${precioHtml}</span> <span class="arrow">▶</span>`;
             htmlTotal += `</div>`;
             
             // LA TABLA OCULTA

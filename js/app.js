@@ -123,6 +123,9 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones) {
 
         let total = 0;
         let incompleto = false;
+        // NUEVO: además del total, guardamos el desglose por componente (uno por grupo) para el
+        // popup que aparece al pasar el ratón por el nombre del kit -- ver renderKitsAgrupados.
+        const desglose = [];
         Object.values(porGrupo).forEach(opcionesGrupo => {
             // De entre el componente y su(s) sustituto(s), nos quedamos con la opción más barata
             // -- ya multiplicada por SU propia cantidad (que puede diferir de la de su pareja).
@@ -132,18 +135,36 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones) {
                 if (!precio) return;
                 const coste = precio.precioUnitario * cantidad;
                 if (!mejorOpcion || coste < mejorOpcion.coste) {
-                    mejorOpcion = { coste, sinStock: precio.sinStock };
+                    mejorOpcion = { idComp, cantidad, precioUnitario: precio.precioUnitario, coste, sinStock: precio.sinStock };
                 }
             });
             if (mejorOpcion) {
                 total += mejorOpcion.coste;
                 if (mejorOpcion.sinStock) incompleto = true;
+                desglose.push({
+                    idComp: mejorOpcion.idComp,
+                    cantidad: mejorOpcion.cantidad,
+                    precioUnitario: mejorOpcion.precioUnitario,
+                    subtotal: mejorOpcion.coste,
+                    sinStock: mejorOpcion.sinStock
+                });
             } else {
-                incompleto = true; // ningún literal del grupo tiene precio -- no se puede sumar
+                // Ningún literal del grupo tiene precio -- no se puede sumar. Se deja constancia
+                // en el desglose (con los IDs del grupo, ya que no hay uno "elegido") en vez de
+                // omitirlo en silencio, para que el popup explique por qué el total no cuadra.
+                incompleto = true;
+                desglose.push({
+                    idComp: opcionesGrupo.map(o => o.idComp).join(' / '),
+                    cantidad: opcionesGrupo[0] ? opcionesGrupo[0].cantidad : 0,
+                    precioUnitario: null,
+                    subtotal: null,
+                    sinStock: true
+                });
             }
         });
 
-        resultado[idKit] = { total, incompleto };
+        desglose.sort((a, b) => a.idComp.localeCompare(b.idComp, 'es', { sensitivity: 'base' }));
+        resultado[idKit] = { total, incompleto, desglose };
     });
 
     return resultado;

@@ -118,6 +118,61 @@ td {
     background: rgba(255, 255, 255, 0.1);
 }
 
+/* NUEVO: popup de desglose de precio al pasar el ratón por el NOMBRE del kit (no por toda la
+   fila) -- CSS puro (:hover), sin JS, para no complicar el listener de click que ya abre/cierra
+   el acordeón del kit. */
+.kit-nombre-tooltip {
+    position: relative;
+    cursor: help;
+    border-bottom: 1px dotted var(--text-secondary);
+}
+
+.kit-tooltip-popup {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 8px;
+    z-index: 50;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-size: 12px;
+    font-weight: normal;
+    min-width: 240px;
+    max-width: 380px;
+    white-space: normal;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+    cursor: default;
+}
+
+.kit-nombre-tooltip:hover .kit-tooltip-popup {
+    display: block;
+}
+
+.kit-tooltip-popup table {
+    font-size: 12px;
+}
+
+.kit-tooltip-popup td {
+    max-width: none;
+    overflow: visible;
+    text-overflow: initial;
+    border-bottom: none;
+    padding: 2px 6px;
+}
+
+/* Solo la primera columna (nombre del componente) puede partirse en varias líneas si hace falta
+   -- las columnas de cantidad/precio son cortas y quedan mejor siempre en una sola línea. */
+.kit-tooltip-popup td:first-child {
+    white-space: normal;
+}
+
+.kit-tooltip-popup td:not(:first-child) {
+    white-space: nowrap;
+}
+
 /* NUEVO: Contenedor para alinear el componente y sus kits */
 .kit-info-wrapper {
     display: grid;
