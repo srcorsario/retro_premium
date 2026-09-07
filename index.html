@@ -133,6 +133,26 @@
         </div>
     </div>
 
+    <!-- NUEVO: MODAL AÑADIR STOCK FÍSICO (pestaña Stock Físico) -->
+    <div id="modal-stock" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <h3>➕ Añadir Stock Físico</h3>
+            <div style="margin-bottom: 15px;">
+                <label for="stock-id-componente" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Componente:</label>
+                <select id="stock-id-componente" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;"></select>
+            </div>
+            <div style="margin-bottom: 5px;">
+                <label for="stock-cantidad" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Unidades a añadir:</label>
+                <input type="number" id="stock-cantidad" value="1" min="1" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+            </div>
+            <p style="font-size:12px; color:var(--text-secondary); margin-top:5px;">Se SUMA a lo que ya tengas en stock de ese componente (si todavía no tiene ninguna fila en Stock_Almacen, se crea una nueva).</p>
+            <div class="modal-actions">
+                <button id="btn-cancel-stock" class="btn" style="background: var(--danger);">Cancelar</button>
+                <button id="btn-submit-stock" class="btn" style="background: var(--success);">Guardar</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="js/app.js"></script>
 </body>
 </html>

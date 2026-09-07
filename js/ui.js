@@ -200,11 +200,23 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         </table>
     `;
 
+    // NUEVO: en la pestaña Stock Físico se antepone un botón para abrir el modal "➕ Añadir Stock"
+    // (ver pedidos.js -- se engancha por delegación de eventos porque este botón se regenera cada
+    // vez que se recarga la pestaña, así que un listener puesto aquí se perdería en el siguiente
+    // render) -- así se puede sumar stock recién llegado sin ir a editar Google Sheets a mano.
+    let toolbarHtml = '';
+    if (nombrePestana === 'Stock_Almacen') {
+        toolbarHtml = `
+            <div style="margin-bottom:12px;">
+                <button id="btn-add-stock" class="btn" style="background: var(--success);">➕ Añadir Stock</button>
+            </div>`;
+    }
+
     // Añadir la tabla respetando si ya inyectamos los toggles en "Componentes"
     if (nombrePestana === 'Componentes') {
         container.insertAdjacentHTML('beforeend', tableHtml);
     } else {
-        container.innerHTML = tableHtml;
+        container.innerHTML = toolbarHtml + tableHtml;
     }
 }
 

@@ -19,8 +19,13 @@ export async function inicializarModuloPedidos() {
     const btnSyncTme = document.getElementById('btn-sync-tme'); // asistente manual TME (respaldo)
     const btnCancelTme = document.getElementById('btn-cancel-tme');
     const btnSubmitTme = document.getElementById('btn-submit-tme');
+    // NUEVO: modal "➕ Añadir Stock" (pestaña Stock Físico) -- el botón que lo abre (#btn-add-stock)
+    // NO está aquí: se inyecta dinámicamente en ui.js cada vez que se carga esa pestaña, así que se
+    // engancha por delegación de eventos más abajo en vez de un addEventListener directo.
+    const btnCancelStock = document.getElementById('btn-cancel-stock');
+    const btnSubmitStock = document.getElementById('btn-submit-stock');
 
-    if (!select || !btnVerificar || !btnSyncTodo || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncTme || !btnCancelTme || !btnSubmitTme) return;
+    if (!select || !btnVerificar || !btnSyncTodo || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnCancelStock || !btnSubmitStock) return;
 
     const datosKits = await obtenerDatos('Kits_Consolas');
     const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
@@ -41,6 +46,16 @@ export async function inicializarModuloPedidos() {
     btnSyncTme.addEventListener('click', abrirModalTME);
     btnCancelTme.addEventListener('click', cerrarModalTME);
     btnSubmitTme.addEventListener('click', enviarDatosTME);
+    btnCancelStock.addEventListener('click', cerrarModalStock);
+    btnSubmitStock.addEventListener('click', enviarDatosStock);
+
+    // NUEVO: #btn-add-stock se regenera cada vez que ui.js vuelve a pintar la pestaña Stock Físico
+    // (renderTabla reemplaza el contenedor entero), así que un addEventListener normal se perdería
+    // en cuanto se cambiara de pestaña y se volviera. Delegando el click en document (que sí es
+    // estable) el botón funciona sin importar cuántas veces se haya regenerado.
+    document.addEventListener('click', (e) => {
+        if (e.target.closest('#btn-add-stock')) abrirModalStock();
+    });
 
     pedidosInicializado = true;
 }
@@ -250,6 +265,67 @@ async function enviarDatosTME() {
             location.reload();
         } else {
             mostrarMensaje('msg-pedidos', '✅ Variante TME guardada. Refresca la web cuando quieras.', false);
+        }
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
+    }
+}
+
+// --- NUEVO: MÓDULO STOCK FÍSICO (mismo patrón que AliExpress/TME, pero con un desplegable
+// de componentes ÚNICOS -- aquí no importa el proveedor, solo qué componente es) ---
+async function abrirModalStock() {
+    const modal = document.getElementById('modal-stock');
+    const selectComp = document.getElementById('stock-id-componente');
+    if (modal && selectComp) {
+        if (selectComp.options.length === 0) {
+            const datosComp = await obtenerDatos('Componentes');
+            // MODIFICADO: Componentes tiene una fila por (componente, proveedor), así que un mismo
+            // ID_Componente puede repetirse hasta 3 veces -- aquí se quiere "cada TIPO de
+            // componente" una sola vez en el desplegable, ordenado alfabéticamente para encontrarlo
+            // rápido entre decenas de piezas.
+            const idsUnicos = [...new Set(datosComp.map(c => c['ID_Componente']).filter(id => id))]
+                .sort((a, b) => String(a).localeCompare(String(b), 'es', { sensitivity: 'base' }));
+            idsUnicos.forEach(id => {
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = id;
+                selectComp.appendChild(opt);
+            });
+        }
+        modal.style.display = 'flex';
+    }
+}
+
+function cerrarModalStock() {
+    const modal = document.getElementById('modal-stock');
+    if (modal) modal.style.display = 'none';
+}
+
+async function enviarDatosStock() {
+    const idComp = document.getElementById('stock-id-componente').value;
+    const cantidad = document.getElementById('stock-cantidad').value;
+
+    if (!idComp || !cantidad || cantidad <= 0) {
+        mostrarMensaje('msg-pedidos', '❌ Selecciona un componente e indica una cantidad válida.', true);
+        return;
+    }
+
+    cerrarModalStock();
+    mostrarMensaje('msg-pedidos', '🔄 Añadiendo stock en Google Sheets...', false);
+
+    // NUEVO: action 'update_stock_manual' (Codigo.gs -> guardarStockManual) SUMA esta cantidad al
+    // stock ya existente de ese componente, o crea la fila si todavía no tenía ninguna.
+    const exito = await actualizarDatos({
+        action: 'update_stock_manual',
+        idComponente: idComp,
+        cantidad: cantidad
+    });
+
+    if (exito) {
+        if (confirm("✅ ¡Stock actualizado correctamente!\n\nPulsa Aceptar para refrescar la web y ver los cambios.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '✅ Stock actualizado. Refresca la web cuando quieras.', false);
         }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);

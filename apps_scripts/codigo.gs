@@ -207,6 +207,55 @@ function guardarVarianteManual(idComponente, udsPack, precioPack, stockPacks, no
 }
 
 /**
+ * NUEVO: guarda una entrada de stock físico manual desde la web (acción 'update_stock_manual',
+ * modal "➕ Añadir Stock" en la pestaña Stock Físico) -- para no tener que abrir Google Sheets a
+ * mano cada vez que llega material nuevo. Si el componente YA tiene una fila en Stock_Almacen, se
+ * SUMA la cantidad indicada a lo que ya había (no se sobreescribe -- "añadir stock" funciona como
+ * cabría esperar: si tenías 20 y llegan 50 más, quedan 70). Si el componente todavía no tiene
+ * ninguna fila en Stock_Almacen, se crea una nueva con esa cantidad como stock inicial.
+ * No asume cuántas columnas tiene la hoja -- localiza ID_Componente y Uds_Disponibles por
+ * cabecera, y deja el resto de columnas de una fila nueva en blanco (p.ej. Stock_Minimo_Alerta se
+ * puede rellenar luego a mano en Sheets si se quiere alerta de mínimos para ese componente).
+ */
+function guardarStockManual(idComponente, cantidad) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Stock_Almacen");
+    if (!sheet) throw new Error("No se encuentra la pestaña 'Stock_Almacen'.");
+    if (!idComponente) throw new Error("ID de componente no válido.");
+
+    const cantidadNum = Number(cantidad);
+    if (isNaN(cantidadNum) || cantidadNum <= 0) throw new Error("La cantidad debe ser un número mayor que 0.");
+
+    const dataRange = sheet.getDataRange().getValues();
+    const headers = dataRange.shift().map(function(h) { return String(h).trim(); });
+    const idColIndex = headers.indexOf('ID_Componente');
+    const udsColIndex = headers.indexOf('Uds_Disponibles');
+    if (idColIndex === -1 || udsColIndex === -1) {
+      throw new Error("Faltan columnas 'ID_Componente' o 'Uds_Disponibles' en Stock_Almacen.");
+    }
+
+    for (let i = 0; i < dataRange.length; i++) {
+      if (String(dataRange[i][idColIndex]).trim() === String(idComponente).trim()) {
+        const actual = Number(dataRange[i][udsColIndex]) || 0;
+        const nuevoValor = actual + cantidadNum;
+        sheet.getRange(i + 2, udsColIndex + 1).setValue(nuevoValor);
+        return `Stock actualizado: ${idComponente} ahora tiene ${nuevoValor} uds (antes ${actual}, +${cantidadNum}).`;
+      }
+    }
+
+    // No existía ninguna fila de Stock_Almacen para este componente -- se crea una nueva.
+    const filaNueva = new Array(headers.length).fill('');
+    filaNueva[idColIndex] = String(idComponente);
+    filaNueva[udsColIndex] = cantidadNum;
+    sheet.getRange(sheet.getLastRow() + 1, 1, 1, filaNueva.length).setValues([filaNueva]);
+    return `Nueva fila de stock creada para ${idComponente}: ${cantidadNum} uds.`;
+  } catch (err) {
+    throw new Error("Error al guardar stock: " + err.message);
+  }
+}
+
+/**
  * NUEVO: wrapper fino para guardar en Variantes_TME, usado por doPost (acción
  * 'update_tme_manual', desde el modal de la web) -- guarda UN solo tramo.
  */
@@ -1754,6 +1803,14 @@ function doPost(e) {
     // NUEVO: Acción para sincronizar la columna M de Kits_Consolas (pack/precio unitario) desde la web
     if (action === 'sync_pack_precio_kits') {
       const msg = actualizarColumnaPackPrecioKits();
+      return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // NUEVO: Acción para el modal "➕ Añadir Stock" de la pestaña Stock Físico -- suma la cantidad
+    // indicada al stock existente de ese componente (o crea la fila si todavía no tenía ninguna).
+    if (action === 'update_stock_manual') {
+      const msg = guardarStockManual(payload.idComponente, payload.cantidad);
       return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
         .setMimeType(ContentService.MimeType.JSON);
     }
