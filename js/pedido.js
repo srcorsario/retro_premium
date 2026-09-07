@@ -144,8 +144,12 @@ async function cargarDatosPedido() {
 
     // Agrupamos las filas de Componentes por "grupo" (el ID_Original si es un sustituto, o su
     // propio ID si no), igual que hace Apps Script para las columnas L/M de Kits_Consolas.
-    // Solo necesitamos saber qué combinaciones (proveedor, literalId, marca) existen -- los
+    // Solo necesitamos saber qué combinaciones (proveedor, literalId, marca, link) existen -- los
     // precios/packs reales se sacan de tiersPorProveedor, no de Componentes.
+    // NUEVO: "Link_AliExpress" es el nombre histórico de la columna K de Componentes, pero Apps
+    // Script ya la reutiliza como el enlace de producto de CUALQUIER proveedor (ver comentario de
+    // abrirAsistenteTME en Codigo.gs, "columna K compartida") -- cada fila de Componentes es un
+    // (literalId, proveedor) concreto con su propio enlace ahí, así que se puede leer igual aquí.
     const filasPorGrupo = {};
     componentes.forEach(row => {
         const literalId = (row['ID_Componente'] || '').trim();
@@ -156,7 +160,8 @@ async function cargarDatosPedido() {
         filasPorGrupo[grupo].push({
             literalId,
             proveedor,
-            marca: row['Marca_Top'] || ''
+            marca: row['Marca_Top'] || '',
+            link: (row['Link_AliExpress'] || '').trim()
         });
     });
 
@@ -397,20 +402,23 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                     checked = 'checked';
                     preseleccionadoPorGrupo[grupo] = true;
                 }
-                const etiquetaProveedor = ETIQUETA_PROVEEDOR[opt.proveedor] || opt.proveedor;
-                const etiquetaMarca = opt.marca ? ` — ${opt.marca}` : '';
                 // MODIFICADO: el texto/color de cada opción (desglose, "sin stock", "cubierto con
                 // stock"...) ahora sale de textoYColorOpcion() -- misma función que usa
                 // actualizarFilaPorCantidad() al editar "Cantidad a pedir", para que el resultado
                 // sea idéntico se calcule cuando se calcule.
                 const { desgloseTexto, texto: textoCompra, color: colorTexto } =
                     textoYColorOpcion(opt.compra, opt.hayStock, cantidadPedidaInicial);
+                // NUEVO: la etiqueta del proveedor (+marca) ahora es un link a la ficha real del
+                // producto cuando esa fila de Componentes tiene uno guardado -- ver
+                // etiquetaProveedorHtml().
+                const etiquetaHtml = etiquetaProveedorHtml(opt.proveedor, opt.marca, opt.link);
 
-                // NUEVO: data-literal-id y data-marca permiten recalcular esta misma opción más
-                // tarde (cuando el usuario edite "Cantidad a pedir") sin tener que regenerar todo
-                // el HTML de la fila -- ver actualizarFilaPorCantidad(). El texto visible ahora
-                // vive en un <span class="pedido-texto-opcion"> aparte para poder actualizarlo solo
-                // a él, conservando el estado "checked" del radio tal cual lo dejó el usuario.
+                // NUEVO: data-literal-id, data-marca y data-link permiten recalcular esta misma
+                // opción más tarde (cuando el usuario edite "Cantidad a pedir") sin tener que
+                // regenerar todo el HTML de la fila -- ver actualizarFilaPorCantidad(). El texto
+                // visible ahora vive en un <span class="pedido-texto-opcion"> aparte para poder
+                // actualizarlo solo a él, conservando el estado "checked" del radio tal cual lo
+                // dejó el usuario.
                 return `
                     <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0; ${!usable ? 'opacity:0.55;' : ''}">
                         <input type="radio" name="${nombreGrupo}"
@@ -421,9 +429,10 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                             data-proveedor="${opt.proveedor}"
                             data-literal-id="${escapeAttr(opt.literalId)}"
                             data-marca="${escapeAttr(opt.marca || '')}"
+                            data-link="${escapeAttr(opt.link || '')}"
                             ${checked} ${disabled}
                             class="pedido-radio-opcion">
-                        <span class="pedido-texto-opcion" style="${colorTexto}">${etiquetaProveedor}${etiquetaMarca} — ${textoCompra}</span>
+                        <span class="pedido-texto-opcion" style="${colorTexto}">${etiquetaHtml} — ${textoCompra}</span>
                     </label>`;
             }).join('');
 
@@ -493,6 +502,23 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     recalcularPedido();
 }
 
+// NUEVO: construye el HTML de la etiqueta de una opción de proveedor ("TME — Nichicon", etc.) --
+// si esa fila de Componentes tiene un enlace de producto (columna "Link_AliExpress", reutilizada
+// como enlace genérico -- ver comentario en cargarDatosPedido), la etiqueta entera se convierte en
+// un link que abre la ficha real del producto en una pestaña nueva. Así se puede hacer el pedido
+// pinchando directamente ahí, sin tener que ir a buscarlo a mano en Google Sheets. Se valida que
+// el link empiece por http(s):// antes de convertirlo en <a> -- si viene vacío o con otra cosa, se
+// deja como texto plano (evita esquemas raros tipo "javascript:" colándose desde la hoja).
+function etiquetaProveedorHtml(proveedor, marca, link) {
+    const etiquetaProveedor = ETIQUETA_PROVEEDOR[proveedor] || proveedor;
+    const etiquetaMarca = marca ? ` — ${marca}` : '';
+    const texto = `${etiquetaProveedor}${etiquetaMarca}`;
+    if (link && /^https?:\/\//i.test(link)) {
+        return `<a href="${escapeAttr(link)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);" title="Abrir ficha del producto en ${escapeAttr(etiquetaProveedor)}">${texto} 🔗</a>`;
+    }
+    return texto;
+}
+
 // NUEVO: dado el resultado de calcularMejorCompra() para UNA opción de proveedor, decide qué
 // texto y color mostrar -- misma lógica usada tanto en el render inicial de la tabla como en
 // actualizarFilaPorCantidad() (al editar "Cantidad a pedir"), para que ambos caminos den
@@ -541,6 +567,7 @@ function actualizarFilaPorCantidad(tr) {
         const proveedor = radio.getAttribute('data-proveedor');
         const literalId = radio.getAttribute('data-literal-id');
         const marca = radio.getAttribute('data-marca') || '';
+        const link = radio.getAttribute('data-link') || '';
         const tiers = (tiersPorProveedor[proveedor] && tiersPorProveedor[proveedor][literalId]) || [];
         const compra = calcularMejorCompra(tiers, cantidadPedida);
         const hayStock = tiers.some(t => t.stockPacks > 0);
@@ -560,10 +587,11 @@ function actualizarFilaPorCantidad(tr) {
         const spanTexto = label ? label.querySelector('.pedido-texto-opcion') : null;
         if (label) label.style.opacity = usable ? '1' : '0.55';
         if (spanTexto) {
-            const etiquetaProveedor = ETIQUETA_PROVEEDOR[proveedor] || proveedor;
-            const etiquetaMarca = marca ? ` — ${marca}` : '';
+            // MODIFICADO: innerHTML (no textContent) para conservar el link a la ficha del
+            // producto -- ver etiquetaProveedorHtml(). textContent lo habría convertido en texto
+            // plano cada vez que se edita "Cantidad a pedir", perdiendo el enlace.
             spanTexto.setAttribute('style', colorTexto);
-            spanTexto.textContent = `${etiquetaProveedor}${etiquetaMarca} — ${textoCompra}`;
+            spanTexto.innerHTML = `${etiquetaProveedorHtml(proveedor, marca, link)} — ${textoCompra}`;
         }
     });
 
