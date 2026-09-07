@@ -228,14 +228,23 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, stock
         // NUEVO: gastos de envío/aduanas -- una vez por proveedor realmente usado en este kit
         // (GASTOS_ENVIO/totalGastosEnvio de pedido.js), prorrateados entre sus componentes
         // proporcionalmente a lo que cuesta cada uno dentro de ese proveedor.
+        // MODIFICADO 2026-09-07 (a petición del usuario -- "ten en cuenta que cada vez se van a
+        // pedir 80 packs completos, así repartirás mejor ese coste"): el gasto de envío/aduanas de
+        // un proveedor es fijo por PEDIDO, no por kit -- si en la práctica cada pedido real agrupa
+        // CANTIDAD_KITS_POR_PEDIDO kits de golpe, cargarle el gasto de envío COMPLETO a un solo kit
+        // (como se hacía hasta ahora) sobrevalora muchísimo su coste real. En vez de eso, a este
+        // kit solo le corresponde 1/CANTIDAD_KITS_POR_PEDIDO parte del gasto fijo de cada proveedor
+        // -- esa parte (ya reducida) es la que se prorratea entre sus componentes como antes.
+        const CANTIDAD_KITS_POR_PEDIDO = 80;
         let totalEnvio = 0;
         Object.entries(costesPorProveedor).forEach(([proveedor, costeProveedor]) => {
-            const envio = totalGastosEnvio(proveedor);
-            if (envio <= 0 || costeProveedor <= 0) return;
-            totalEnvio += envio;
+            const envioTotalProveedor = totalGastosEnvio(proveedor);
+            if (envioTotalProveedor <= 0 || costeProveedor <= 0) return;
+            const envioParaEsteKit = envioTotalProveedor / CANTIDAD_KITS_POR_PEDIDO;
+            totalEnvio += envioParaEsteKit;
             desglose.forEach(d => {
                 if (d.proveedor === proveedor && d.costeArticulo > 0) {
-                    const parte = (d.costeArticulo / costeProveedor) * envio;
+                    const parte = (d.costeArticulo / costeProveedor) * envioParaEsteKit;
                     d.envioProrrateado = parte;
                     d.subtotal = d.costeArticulo + parte;
                 }

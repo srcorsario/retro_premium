@@ -347,7 +347,7 @@ function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit) {
 
                 const popupHtml = `
                     <div class="kit-tooltip-popup">
-                        <div style="font-weight:bold; margin-bottom:6px; white-space:normal;">💰 Desglose de ${nombreKit} <span style="font-weight:normal; color:var(--text-secondary);">(incluye envío/aduanas prorrateados)</span>${precioInfo.incompleto ? ' <span style="color:#eab308; font-weight:normal;">(orientativo -- ⚠️ = sin stock real ahora mismo)</span>' : ''}</div>
+                        <div style="font-weight:bold; margin-bottom:6px; white-space:normal;">💰 Desglose de ${nombreKit} <span style="font-weight:normal; color:var(--text-secondary);">(incluye envío/aduanas prorrateados, suponiendo pedidos de 80 kits)</span>${precioInfo.incompleto ? ' <span style="color:#eab308; font-weight:normal;">(orientativo -- ⚠️ = sin stock real ahora mismo)</span>' : ''}</div>
                         <table style="width:100%;"><tbody>
                             ${filasDesglose}
                             <tr style="border-top:1px solid var(--border-color);">
