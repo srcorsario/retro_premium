@@ -8,6 +8,38 @@ import { inicializarModuloPedido, ORDEN_PRESELECCION, totalGastosEnvio } from '.
 // Variable para saber qué pestaña estamos viendo
 let vistaActual = 'Componentes';
 
+// NUEVO: tamaño de lote (nº de kits que se piden de golpe en un pedido real) para prorratear el
+// envío/aduanas en el precio de Kits -- editable desde una casilla en la propia pestaña (ver
+// ui.js), guardado en localStorage para que no se resetee al recargar la página. 80 por defecto.
+const LS_KITS_TAMANO_LOTE = 'retro_premium_kits_tamano_lote';
+
+function obtenerTamanoLoteGuardado() {
+    const guardado = localStorage.getItem(LS_KITS_TAMANO_LOTE);
+    const numero = parseInt(guardado, 10);
+    return (!isNaN(numero) && numero > 0) ? numero : 80;
+}
+
+// NUEVO: datos base (sin calcular precios) de la última carga de la pestaña Kits -- se guardan
+// para poder recalcular solo el precio (p.ej. al cambiar el tamaño de lote) sin tener que volver a
+// pedir todas las hojas a Google Sheets cada vez que el usuario toca la casilla.
+let cacheKitsBase = null;
+
+// NUEVO: recalcula los precios de Kits con un nuevo tamaño de lote y vuelve a pintar la tabla,
+// reutilizando los datos ya cargados (cacheKitsBase). Se llama desde el listener de la casilla
+// "Kits por pedido" (ver más abajo, event delegation igual que el resto de botones dinámicos).
+function recalcularYRenderizarKits(nuevoTamanoLote) {
+    if (!cacheKitsBase) return;
+    if (nuevoTamanoLote && nuevoTamanoLote > 0) {
+        localStorage.setItem(LS_KITS_TAMANO_LOTE, String(nuevoTamanoLote));
+    }
+    const tamanoLote = obtenerTamanoLoteGuardado();
+    const extra = {
+        preciosPorKit: calcularPreciosPorKit(cacheKitsBase.datos, cacheKitsBase.datosComponentes, cacheKitsBase.sustituciones, tamanoLote),
+        tamanoLote
+    };
+    renderTabla('contenedor-tabla', cacheKitsBase.datos, 'Kits_Consolas', extra);
+}
+
 // Función genérica para cruzar datos de cualquier tabla con Kits y calcular dónde se usa cada componente
 function calcularKitsPorComponente(datos, kits) {
     if (!datos || !kits) return datos;
@@ -69,19 +101,21 @@ function parseNumeroES(valor) {
 // teniendo en cuenta el proveedor de cada artículo, teniendo en cuenta el predeterminado y/o el
 // stock"): el precio de un kit ya no es solo "componente × precio/ud más barato entre proveedores".
 // Ahora, por cada componente:
-//   1. Se resta el stock físico que ya haya en el almacén (Stock_Almacen) -- si cubre toda la
-//      necesidad, ese componente sale gratis en el kit (no hace falta comprarlo), igual que
-//      "Cantidad a pedir" en el generador de pedido.
-//   2. El proveedor se elige con la MISMA preselección que el generador de pedido (ORDEN_PRESELECCION,
+//   1. El proveedor se elige con la MISMA preselección que el generador de pedido (ORDEN_PRESELECCION,
 //      TME primero) en vez de "el más barato" -- solo se cae a LCSC/AliExpress si TME no tiene esa
-//      opción disponible ahora mismo. Si ningún proveedor tiene stock real, se usa la opción de
-//      referencia más barata (como antes) y el kit se marca "incompleto".
-//   3. Los gastos de envío/aduanas (GASTOS_ENVIO, ver pedido.js) de cada proveedor realmente usado
+//      opción disponible en el proveedor ahora mismo. Si ningún proveedor tiene stock real, se usa
+//      la opción de referencia más barata (como antes) y el kit se marca "incompleto".
+//   2. Los gastos de envío/aduanas (GASTOS_ENVIO, ver pedido.js) de cada proveedor realmente usado
 //      en el kit se suman UNA vez por proveedor y se PRORRATEAN entre sus componentes de ese kit,
 //      proporcionalmente a lo que cuesta cada uno (el componente más caro de ese proveedor absorbe
 //      más parte del envío) -- así el total del kit refleja el coste real aproximado, no solo el
 //      precio de los componentes sueltos.
-function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, stockPorId) {
+// MODIFICADO 2026-09-07 (2ª petición): el precio de Kits YA NO resta el stock físico del almacén
+// (Stock_Almacen) -- se probó, pero el usuario detectó que como cada kit se calcula por separado,
+// una misma unidad de stock se contaba como "cubierta" a la vez en TODOS los kits que usan ese
+// componente, dando una sensación falsa de ahorro. El precio de Kits es un valor ORIENTATIVO del
+// kit completo (como si se comprara todo desde cero), no "cuánto me falta comprar ahora mismo".
+function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, cantidadKitsPorPedido) {
     const sustitucionesMap = {}; // ID_Nuevo -> ID_Original
     (sustituciones || []).forEach(row => {
         const idNuevo = (row['ID_Nuevo'] || '').trim();
@@ -92,7 +126,8 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, stock
 
     // Por cada ID_Componente literal, todas sus opciones de precio (una por proveedor que lo
     // tenga registrado en Componentes), con su proveedor y si esa opción concreta está sin stock
-    // ahora mismo (necesario para poder preseleccionar TME en vez de "el más barato").
+    // EN EL PROVEEDOR ahora mismo (necesario para poder preseleccionar TME en vez de "el más
+    // barato" -- esto es la disponibilidad en LCSC/AliExpress/TME, no tu stock físico).
     const opcionesPorLiteralId = {};
     (datosComponentes || []).forEach(row => {
         const literalId = (row['ID_Componente'] || '').trim();
@@ -107,18 +142,11 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, stock
         opcionesPorLiteralId[literalId].push({ proveedor, precioUnitario, sinStock });
     });
 
-    // NUEVO: resuelve UN literalId a la cantidad que realmente hace falta comprar (restando el
-    // stock físico que ya se tenga) y al proveedor elegido (preselección TME, con fallback al más
-    // barato de referencia si nadie tiene stock real). Devuelve null si el literalId no tiene
-    // ningún precio registrado en absoluto.
+    // NUEVO: resuelve UN literalId (para la cantidad completa que pide el kit, sin restar stock)
+    // al proveedor elegido -- preselección TME, con fallback al más barato de referencia si nadie
+    // tiene stock real en el proveedor. Devuelve null si el literalId no tiene ningún precio
+    // registrado en absoluto.
     function resolverComponente(idComp, cantidadNecesaria) {
-        const stockDisponible = (stockPorId && stockPorId[idComp]) || 0;
-        const cantidadAPedir = Math.max(0, cantidadNecesaria - stockDisponible);
-
-        if (cantidadAPedir <= 0) {
-            return { idComp, cantidadAPedir: 0, proveedor: null, precioUnitario: 0, coste: 0, sinStock: false, cubiertoStock: true };
-        }
-
         const opciones = opcionesPorLiteralId[idComp];
         if (!opciones || opciones.length === 0) return null;
 
@@ -135,12 +163,10 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, stock
 
         return {
             idComp,
-            cantidadAPedir,
             proveedor: elegida.proveedor,
             precioUnitario: elegida.precioUnitario,
-            coste: elegida.precioUnitario * cantidadAPedir,
-            sinStock: elegida.sinStock,
-            cubiertoStock: false
+            coste: elegida.precioUnitario * cantidadNecesaria,
+            sinStock: elegida.sinStock
         };
     }
 
@@ -196,14 +222,12 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, stock
                 desglose.push({
                     idComp: mejorOpcion.idComp,
                     cantidad: mejorOpcion.cantidad,
-                    cantidadAPedir: mejorOpcion.cantidadAPedir,
                     proveedor: mejorOpcion.proveedor,
                     precioUnitario: mejorOpcion.precioUnitario,
                     costeArticulo: mejorOpcion.coste,
                     envioProrrateado: 0, // se rellena más abajo, una vez sumado todo el kit
                     subtotal: mejorOpcion.coste,
-                    sinStock: mejorOpcion.sinStock,
-                    cubiertoStock: mejorOpcion.cubiertoStock
+                    sinStock: mejorOpcion.sinStock
                 });
             } else {
                 // Ningún literal del grupo tiene precio -- no se puede sumar. Se deja constancia
@@ -213,14 +237,12 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, stock
                 desglose.push({
                     idComp: opcionesGrupo.map(o => o.idComp).join(' / '),
                     cantidad: opcionesGrupo[0] ? opcionesGrupo[0].cantidad : 0,
-                    cantidadAPedir: null,
                     proveedor: null,
                     precioUnitario: null,
                     costeArticulo: null,
                     envioProrrateado: null,
                     subtotal: null,
-                    sinStock: true,
-                    cubiertoStock: false
+                    sinStock: true
                 });
             }
         });
@@ -229,18 +251,19 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, stock
         // (GASTOS_ENVIO/totalGastosEnvio de pedido.js), prorrateados entre sus componentes
         // proporcionalmente a lo que cuesta cada uno dentro de ese proveedor.
         // MODIFICADO 2026-09-07 (a petición del usuario -- "ten en cuenta que cada vez se van a
-        // pedir 80 packs completos, así repartirás mejor ese coste"): el gasto de envío/aduanas de
-        // un proveedor es fijo por PEDIDO, no por kit -- si en la práctica cada pedido real agrupa
-        // CANTIDAD_KITS_POR_PEDIDO kits de golpe, cargarle el gasto de envío COMPLETO a un solo kit
-        // (como se hacía hasta ahora) sobrevalora muchísimo su coste real. En vez de eso, a este
-        // kit solo le corresponde 1/CANTIDAD_KITS_POR_PEDIDO parte del gasto fijo de cada proveedor
-        // -- esa parte (ya reducida) es la que se prorratea entre sus componentes como antes.
-        const CANTIDAD_KITS_POR_PEDIDO = 80;
+        // pedir 80 packs completos, así repartirás mejor ese coste", y después "déjalo en una
+        // casilla editable"): el gasto de envío/aduanas de un proveedor es fijo por PEDIDO, no por
+        // kit -- si en la práctica cada pedido real agrupa "cantidadKitsPorPedido" kits de golpe,
+        // cargarle el gasto de envío COMPLETO a un solo kit sobrevalora muchísimo su coste real. A
+        // este kit solo le corresponde 1/cantidadKitsPorPedido parte del gasto fijo de cada
+        // proveedor (parámetro editable desde la pestaña Kits, con 80 de valor por defecto) -- esa
+        // parte (ya reducida) es la que se prorratea entre sus componentes como antes.
+        const tamanoLote = (cantidadKitsPorPedido && cantidadKitsPorPedido > 0) ? cantidadKitsPorPedido : 80;
         let totalEnvio = 0;
         Object.entries(costesPorProveedor).forEach(([proveedor, costeProveedor]) => {
             const envioTotalProveedor = totalGastosEnvio(proveedor);
             if (envioTotalProveedor <= 0 || costeProveedor <= 0) return;
-            const envioParaEsteKit = envioTotalProveedor / CANTIDAD_KITS_POR_PEDIDO;
+            const envioParaEsteKit = envioTotalProveedor / tamanoLote;
             totalEnvio += envioParaEsteKit;
             desglose.forEach(d => {
                 if (d.proveedor === proveedor && d.costeArticulo > 0) {
@@ -301,9 +324,11 @@ async function cargarVista(nombrePestana) {
     }
 
     // NUEVO: en la pestaña Kits calculamos también el precio total estimado de cada uno (ver
-    // calcularPreciosPorKit) -- necesita Componentes (precios), Sustituciones (para no contar
-    // dos veces un componente y su sustituto) y Stock_Almacen (para restar el stock físico ya
-    // disponible antes de calcular qué haría falta comprar de verdad, igual que en pedido.js).
+    // calcularPreciosPorKit) -- necesita Componentes (precios) y Sustituciones (para no contar dos
+    // veces un componente y su sustituto). NO usa Stock_Almacen -- el precio de Kits es un valor
+    // orientativo del kit completo, no descuenta lo que ya tengas comprado (ver comentario en
+    // calcularPreciosPorKit). Guardamos los datos base en cacheKitsBase para poder recalcular solo
+    // el precio (p.ej. al cambiar la casilla "Kits por pedido") sin volver a pedir las hojas.
     let extra;
     if (nombrePestana === 'Kits_Consolas') {
         const datosComponentes = await obtenerDatos('Componentes');
@@ -311,14 +336,9 @@ async function cargarVista(nombrePestana) {
         if (ENV.SHEETS['Sustituciones']) {
             sustituciones = await obtenerDatos('Sustituciones');
         }
-        const datosStock = await obtenerDatos('Stock_Almacen');
-        const stockPorId = {};
-        datosStock.forEach(row => {
-            const id = (row['ID_Componente'] || '').trim();
-            if (!id) return;
-            stockPorId[id] = (stockPorId[id] || 0) + parseNumeroES(row['Uds_Disponibles']);
-        });
-        extra = { preciosPorKit: calcularPreciosPorKit(datos, datosComponentes, sustituciones, stockPorId) };
+        cacheKitsBase = { datos, datosComponentes, sustituciones };
+        const tamanoLote = obtenerTamanoLoteGuardado();
+        extra = { preciosPorKit: calcularPreciosPorKit(datos, datosComponentes, sustituciones, tamanoLote), tamanoLote };
     }
 
     renderTabla('contenedor-tabla', datos, nombrePestana, extra);
@@ -346,10 +366,23 @@ document.addEventListener('DOMContentLoaded', () => {
             boton.addEventListener('click', (e) => {
                 botones.forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
-                
+
                 const pestana = e.target.getAttribute('data-sheet');
                 if (pestana) cargarVista(pestana);
             });
         });
     }
+
+    // NUEVO: casilla "Kits por pedido" (pestaña Kits, ver ui.js) -- se regenera cada vez que se
+    // repinta la tabla, así que se escucha por delegación en document (mismo patrón que el botón
+    // "➕ Añadir Stock" en pedidos.js). 'change' (no 'input') para no repintar mientras se está
+    // escribiendo -- repintar en cada tecla destruiría la propia casilla y le haría perder el foco.
+    document.addEventListener('change', (e) => {
+        if (e.target && e.target.id === 'kits-tamano-lote') {
+            const valor = parseInt(e.target.value, 10);
+            if (!isNaN(valor) && valor > 0) {
+                recalcularYRenderizarKits(valor);
+            }
+        }
+    });
 });

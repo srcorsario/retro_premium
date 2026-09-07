@@ -50,11 +50,22 @@ export function renderTabla(contenedorID, datos, nombrePestana, extra) {
         toggleHtmlKits += '</div>';
 
         // NUEVO: precio total estimado por kit (calculado en app.js -- ver calcularPreciosPorKit),
-        // recibido aquí como extra.preciosPorKit = { ID_Kit: {total, incompleto} }.
+        // recibido aquí como extra.preciosPorKit = { ID_Kit: {total, incompleto, desglose} }.
         const preciosPorKit = extra && extra.preciosPorKit;
+        // NUEVO: tamaño de lote (nº de kits que se piden de golpe) usado para prorratear el envío
+        // en ese precio -- casilla editable, el listener real vive en app.js (recalcularYRenderizarKits),
+        // aquí solo se pinta el valor actual y se delega el evento 'change'.
+        const tamanoLote = (extra && extra.tamanoLote) || 80;
 
-        container.innerHTML = toggleHtmlKits;
-        container.insertAdjacentHTML('beforeend', renderKitsAgrupados(datosLimpios, visibleHeadersKits, preciosPorKit));
+        let toolbarLoteHtml = `
+            <div style="margin-bottom:12px; display:flex; align-items:center; gap:8px; font-size:13px; flex-wrap:wrap;">
+                <label for="kits-tamano-lote" style="color:var(--text-secondary);">📦 Kits por pedido (para prorratear envío/aduanas):</label>
+                <input type="number" id="kits-tamano-lote" value="${tamanoLote}" min="1" step="1"
+                    style="width:70px; padding:4px 6px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px;">
+            </div>`;
+
+        container.innerHTML = toolbarLoteHtml + toggleHtmlKits;
+        container.insertAdjacentHTML('beforeend', renderKitsAgrupados(datosLimpios, visibleHeadersKits, preciosPorKit, tamanoLote));
 
         // Listeners para los checkboxes (mismo patrón que en Componentes)
         const checkboxesKits = container.querySelectorAll('.col-toggle-item input[type="checkbox"]');
@@ -277,9 +288,11 @@ const ETIQUETA_PROVEEDOR_KIT = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'T
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
 // NUEVO: 2º parámetro opcional "visibleHeaders" -- si se pasa, la tabla interna de cada kit
 // solo muestra esas columnas (mismo checkbox de visibilidad que ya existe en Componentes).
-// NUEVO: 3º parámetro opcional "preciosPorKit" ({ ID_Kit: {total, incompleto} }, calculado en
-// app.js) -- si se pasa, se muestra el precio total estimado de cada kit junto a su nombre.
-function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit) {
+// NUEVO: 3º parámetro opcional "preciosPorKit" ({ ID_Kit: {total, incompleto, desglose} }, calculado
+// en app.js) -- si se pasa, se muestra el precio total estimado de cada kit junto a su nombre.
+// NUEVO: 4º parámetro "tamanoLote" -- nº de kits que se asume se piden de golpe, solo para el
+// texto informativo del popup (el cálculo real ya viene hecho en preciosPorKit).
+function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit, tamanoLote) {
     const familias = {};
     
     datos.forEach(fila => {
@@ -316,22 +329,16 @@ function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit) {
                 // un popup con el desglose línea a línea -- ver .kit-nombre-tooltip en CSS.
                 // MODIFICADO 2026-09-07: cada línea ahora también muestra el proveedor elegido
                 // (preselección TME, ver calcularPreciosPorKit en app.js) y su parte prorrateada
-                // de envío/aduanas de ese proveedor, aparte del coste del propio componente.
-                // Casos especiales: "📦 cubierto con stock" (no hace falta comprarlo, stock físico
-                // ya lo cubre) y filas sin precio (ningún literal del grupo tenía Precio_Unitario),
-                // marcadas en rojo con "sin precio" en vez de un importe.
+                // de envío/aduanas de ese proveedor, aparte del coste del propio componente. Este
+                // precio es orientativo del kit completo -- NO descuenta tu stock físico (a
+                // petición del usuario, ver comentario en calcularPreciosPorKit). Las filas sin
+                // precio (ningún literal del grupo tenía Precio_Unitario) se marcan en rojo con
+                // "sin precio" en vez de un importe.
                 const filasDesglose = precioInfo.desglose.map(d => {
                     if (d.subtotal === null) {
                         return `<tr>
                             <td style="color:var(--danger);">${d.idComp}</td>
                             <td colspan="3" style="text-align:right; color:var(--danger);">sin precio</td>
-                        </tr>`;
-                    }
-                    if (d.cubiertoStock) {
-                        return `<tr>
-                            <td>${d.idComp}</td>
-                            <td colspan="2" style="text-align:right; color:var(--success);">📦 cubierto con stock</td>
-                            <td style="text-align:right; font-weight:bold;">${formatearPrecioLocal(0)}€</td>
                         </tr>`;
                     }
                     const avisoStock = d.sinStock ? ' ⚠️' : '';
@@ -347,7 +354,7 @@ function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit) {
 
                 const popupHtml = `
                     <div class="kit-tooltip-popup">
-                        <div style="font-weight:bold; margin-bottom:6px; white-space:normal;">💰 Desglose de ${nombreKit} <span style="font-weight:normal; color:var(--text-secondary);">(incluye envío/aduanas prorrateados, suponiendo pedidos de 80 kits)</span>${precioInfo.incompleto ? ' <span style="color:#eab308; font-weight:normal;">(orientativo -- ⚠️ = sin stock real ahora mismo)</span>' : ''}</div>
+                        <div style="font-weight:bold; margin-bottom:6px; white-space:normal;">💰 Desglose de ${nombreKit} <span style="font-weight:normal; color:var(--text-secondary);">(incluye envío/aduanas prorrateados, suponiendo pedidos de ${tamanoLote || 80} kits)</span>${precioInfo.incompleto ? ' <span style="color:#eab308; font-weight:normal;">(orientativo -- ⚠️ = sin stock real ahora mismo)</span>' : ''}</div>
                         <table style="width:100%;"><tbody>
                             ${filasDesglose}
                             <tr style="border-top:1px solid var(--border-color);">
