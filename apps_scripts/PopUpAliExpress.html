@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 15px; color: #333; background-color: #fff; }
+      .card { background: #f8f9fa; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px; margin-bottom: 12px; }
+      .btn-link { display: block; text-align: center; background: #ff4747; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; margin-top: 8px; }
+      .btn-link:hover { background: #e03e3e; }
+      .form-group { margin-bottom: 10px; }
+      label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #4a5568; }
+      input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 14px; }
+      .btn-guardar { background: #0f9d58; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 14px; margin-top: 8px; }
+      .btn-guardar:hover { background: #0b8043; }
+      #mensaje { font-weight: bold; font-size: 13px; margin-top: 10px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <strong id="tituloComponente">ID: <?= idComponente ?></strong>
+      <? if (urlAliExpress && urlAliExpress.indexOf('http') !== -1) { ?>
+        <a href="<?= urlAliExpress ?>" target="_blank" class="btn-link">🔗 Abrir Producto en AliExpress</a>
+      <? } else { ?>
+        <p style="font-size:12px; color:#e53e3e; margin-bottom:0;">⚠️ No se encontró una URL de AliExpress válida.</p>
+      <? } ?>
+    </div>
+
+    <div class="card">
+      <div class="form-group">
+        <label for="udsPack">Unidades por Pack / Lote:</label>
+        <input type="number" id="udsPack" value="1" min="1">
+      </div>
+      <div class="form-group">
+        <label for="precioPack">Precio del Pack (€):</label>
+        <input type="number" id="precioPack" step="0.01" placeholder="Ej: 2.50">
+      </div>
+      <div class="form-group">
+        <label for="stockPacks">Stock (Opcional):</label>
+        <input type="number" id="stockPacks" value="100">
+      </div>
+      <button class="btn-guardar" onclick="enviarDatos()">💾 Guardar Variante</button>
+    </div>
+
+    <div id="mensaje"></div>
+
+    <script>
+      const idComponenteActual = "<?= idComponente ?>";
+
+      function enviarDatos() {
+        const uds = document.getElementById('udsPack').value;
+        const precio = document.getElementById('precioPack').value;
+        const stock = document.getElementById('stockPacks').value;
+        const msgDiv = document.getElementById('mensaje');
+
+        if (!precio || precio <= 0) {
+          msgDiv.style.color = "#d9534f";
+          msgDiv.innerText = "Por favor, introduce un precio válido.";
+          return;
+        }
+
+        msgDiv.style.color = "#333";
+        msgDiv.innerText = "Guardando en Google Sheets...";
+
+        google.script.run
+          .withSuccessHandler(function(res) {
+            msgDiv.style.color = "#0f9d58";
+            msgDiv.innerText = res;
+            setTimeout(function() { google.script.host.close(); }, 1200);
+          })
+          .withFailureHandler(function(err) {
+            msgDiv.style.color = "#d9534f";
+            msgDiv.innerText = "Error: " + err.message;
+          })
+          .guardarVarianteManual(idComponenteActual, uds, precio, stock);
+      }
+    </script>
+  </body>
+</html>

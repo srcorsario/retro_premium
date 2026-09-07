@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 15px; color: #333; background-color: #fff; }
+      .card { background: #f8f9fa; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px; margin-bottom: 12px; }
+      .btn-link { display: block; text-align: center; background: #f97316; color: white; padding: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; margin-top: 8px; }
+      .btn-link:hover { background: #ea580c; }
+      .form-group { margin-bottom: 10px; }
+      label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #4a5568; }
+      input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 14px; }
+      .btn-guardar { background: #0f9d58; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 14px; margin-top: 8px; }
+      .btn-guardar:hover { background: #0b8043; }
+      .btn-anadir { background: #fff; color: #0f9d58; border: 1px dashed #0f9d58; padding: 8px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 13px; margin-top: 4px; }
+      .btn-anadir:hover { background: #f0fdf4; }
+      .btn-quitar { background: none; border: none; color: #d9534f; font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1; }
+      #mensaje { font-weight: bold; font-size: 13px; margin-top: 10px; text-align: center; }
+      .tramos-cabecera { display: flex; gap: 8px; font-size: 11px; font-weight: 600; color: #4a5568; margin-bottom: 4px; }
+      .tramos-cabecera span:first-child { flex: 1; }
+      .tramos-cabecera span:nth-child(2) { flex: 1; }
+      .fila-tramo { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+      .fila-tramo input { flex: 1; }
+      .ayuda { font-size: 11px; color: #718096; margin: 0 0 10px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <strong id="tituloComponente">ID: <?= idComponente ?></strong>
+      <? if (urlProducto && urlProducto.indexOf('http') !== -1) { ?>
+        <a href="<?= urlProducto ?>" target="_blank" class="btn-link">🔗 Abrir Producto en TME.eu</a>
+      <? } else { ?>
+        <p style="font-size:12px; color:#e53e3e; margin-bottom:0;">⚠️ No se encontró una URL de producto válida en la columna K.</p>
+      <? } ?>
+    </div>
+
+    <div class="card">
+      <p class="ayuda">Abre el producto en TME.eu (botón de arriba) y copia aquí todos los tramos de precio que veas (1 ud, 5, 10, 25...). Puedes añadir tantas filas como necesites -- las filas vacías se ignoran. Al guardar, esto SUSTITUYE cualquier tramo que tuvieras ya guardado para este componente en TME (no se acumulan duplicados si editas otra vez).</p>
+
+      <div class="tramos-cabecera">
+        <span>Unidades del pack</span>
+        <span>Precio del pack (€)</span>
+        <span style="width:22px;"></span>
+      </div>
+      <div id="filasTramos"></div>
+      <button type="button" class="btn-anadir" onclick="anadirFila()">+ Añadir tramo</button>
+
+      <div class="form-group" style="margin-top:14px;">
+        <label for="stockPacks">Stock (unidades individuales, aplica a todos los tramos):</label>
+        <input type="number" id="stockPacks" value="100">
+      </div>
+      <button class="btn-guardar" onclick="enviarDatos()">💾 Guardar todos los tramos</button>
+    </div>
+
+    <div id="mensaje"></div>
+
+    <script>
+      const idComponenteActual = "<?= idComponente ?>";
+
+      // NUEVO (fix): si este componente ya tenía tramos guardados en Variantes_TME, los
+      // precargamos en vez de arrancar siempre con filas vacías -- antes, al reabrir el
+      // asistente para revisar o corregir un componente ya guardado, no se veía lo que ya
+      // había, y al guardar se sustituía "a ciegas" sin poder comprobar/editar lo existente.
+      const tramosExistentes = JSON.parse('<?!= tramosExistentesJSON ?>');
+      const stockExistenteVal = <?= stockExistente ?>;
+
+      // NUEVO: en vez de un único tramo por envío, se listan varias filas (uds + precio) que se
+      // guardan todas de golpe -- así no hace falta reabrir el asistente una vez por tramo.
+      function crearFila(uds, precio) {
+        const contenedor = document.getElementById('filasTramos');
+        const fila = document.createElement('div');
+        fila.className = 'fila-tramo';
+        fila.innerHTML =
+          '<input type="number" class="tramo-uds" min="1" placeholder="Ej: 10" value="' + (uds || '') + '">' +
+          '<input type="number" class="tramo-precio" step="0.01" placeholder="Ej: 7,59" value="' + (precio || '') + '">' +
+          '<button type="button" class="btn-quitar" onclick="this.parentElement.remove()" title="Quitar fila">✕</button>';
+        contenedor.appendChild(fila);
+      }
+
+      function anadirFila() {
+        crearFila();
+      }
+
+      if (tramosExistentes.length > 0) {
+        // Ya había tramos guardados para este componente: los mostramos tal cual, más 2 filas
+        // vacías extra por si quiere añadir algún tramo nuevo.
+        tramosExistentes.forEach(function(t) { crearFila(t.uds, t.precio); });
+        crearFila();
+        crearFila();
+        document.getElementById('stockPacks').value = stockExistenteVal;
+        const msgDiv = document.getElementById('mensaje');
+        msgDiv.style.color = "#3182ce";
+        msgDiv.innerText = "Ya tenías " + tramosExistentes.length + " tramo(s) guardado(s) para este componente -- se muestran abajo. Si guardas, sustituyen a los actuales.";
+      } else {
+        // Sin datos previos: arrancamos con 6 filas vacías -- suficiente para el patrón típico
+        // de TME (1/5/10/25/50/100), y siempre se puede añadir alguna más con el botón.
+        for (let i = 0; i < 6; i++) crearFila();
+      }
+
+      function enviarDatos() {
+        const msgDiv = document.getElementById('mensaje');
+        const stock = document.getElementById('stockPacks').value;
+
+        const filasUds = document.querySelectorAll('.tramo-uds');
+        const filasPrecio = document.querySelectorAll('.tramo-precio');
+        const tramos = [];
+        for (let i = 0; i < filasUds.length; i++) {
+          const uds = filasUds[i].value;
+          const precio = filasPrecio[i].value;
+          if (uds && precio && Number(uds) > 0 && Number(precio) > 0) {
+            tramos.push({ uds: Number(uds), precio: Number(precio) });
+          }
+        }
+
+        if (tramos.length === 0) {
+          msgDiv.style.color = "#d9534f";
+          msgDiv.innerText = "Rellena al menos un tramo con unidades y precio válidos.";
+          return;
+        }
+
+        msgDiv.style.color = "#333";
+        msgDiv.innerText = "Guardando " + tramos.length + " tramo(s) en Google Sheets...";
+
+        google.script.run
+          .withSuccessHandler(function(res) {
+            msgDiv.style.color = "#0f9d58";
+            msgDiv.innerText = res;
+            setTimeout(function() { google.script.host.close(); }, 1400);
+          })
+          .withFailureHandler(function(err) {
+            msgDiv.style.color = "#d9534f";
+            msgDiv.innerText = "Error: " + err.message;
+          })
+          .guardarVariantesManualTME(idComponenteActual, tramos, stock);
+      }
+    </script>
+  </body>
+</html>
