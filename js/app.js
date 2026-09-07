@@ -276,7 +276,11 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
 
         const total = totalArticulos + totalEnvio;
 
-        desglose.sort((a, b) => a.idComp.localeCompare(b.idComp, 'es', { sensitivity: 'base' }));
+        // MODIFICADO 2026-09-07 (a petición del usuario -- el popup mostraba los componentes en
+        // otro orden que la tabla desplegable del kit y era confuso): ya NO se ordena alfabéticamente
+        // -- "desglose" se deja tal cual se fue rellenando en el bucle de arriba, que sigue el mismo
+        // orden en que las filas aparecen en Kits_Consolas para este kit (mismo orden que usa la
+        // tabla desplegable en ui.js, que tampoco reordena), así ambos coinciden siempre.
         resultado[idKit] = { total, incompleto, desglose };
     });
 
