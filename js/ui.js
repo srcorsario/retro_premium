@@ -6,7 +6,7 @@ const LS_COL_VISIBILITY = 'retro_premium_col_visibility';
 // NUEVO: Clave separada para la visibilidad de columnas de la pestaña Kits (no comparte ajustes con Componentes)
 const LS_COL_VISIBILITY_KITS = 'retro_premium_col_visibility_kits';
 
-export function renderTabla(contenedorID, datos, nombrePestana) {
+export function renderTabla(contenedorID, datos, nombrePestana, extra) {
     const container = document.getElementById(contenedorID);
     // Manejo defensivo del DOM
     if (!container) return;
@@ -49,8 +49,12 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
         });
         toggleHtmlKits += '</div>';
 
+        // NUEVO: precio total estimado por kit (calculado en app.js -- ver calcularPreciosPorKit),
+        // recibido aquí como extra.preciosPorKit = { ID_Kit: {total, incompleto} }.
+        const preciosPorKit = extra && extra.preciosPorKit;
+
         container.innerHTML = toggleHtmlKits;
-        container.insertAdjacentHTML('beforeend', renderKitsAgrupados(datosLimpios, visibleHeadersKits));
+        container.insertAdjacentHTML('beforeend', renderKitsAgrupados(datosLimpios, visibleHeadersKits, preciosPorKit));
 
         // Listeners para los checkboxes (mismo patrón que en Componentes)
         const checkboxesKits = container.querySelectorAll('.col-toggle-item input[type="checkbox"]');
@@ -70,7 +74,7 @@ export function renderTabla(contenedorID, datos, nombrePestana) {
                 }
 
                 localStorage.setItem(LS_COL_VISIBILITY_KITS, JSON.stringify(currentHidden));
-                renderTabla(contenedorID, datos, nombrePestana);
+                renderTabla(contenedorID, datos, nombrePestana, extra);
             });
         });
 
@@ -254,10 +258,17 @@ function formatearProveedoresDisponibles(texto) {
     return proveedoresHtml + notaHtml;
 }
 
+// NUEVO: precio en formato local (2 decimales, coma) -- mismo criterio que pedido.js.
+function formatearPrecioLocal(n) {
+    return (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
+}
+
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
 // NUEVO: 2º parámetro opcional "visibleHeaders" -- si se pasa, la tabla interna de cada kit
 // solo muestra esas columnas (mismo checkbox de visibilidad que ya existe en Componentes).
-function renderKitsAgrupados(datos, visibleHeaders) {
+// NUEVO: 3º parámetro opcional "preciosPorKit" ({ ID_Kit: {total, incompleto} }, calculado en
+// app.js) -- si se pasa, se muestra el precio total estimado de cada kit junto a su nombre.
+function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit) {
     const familias = {};
     
     datos.forEach(fila => {
@@ -278,10 +289,22 @@ function renderKitsAgrupados(datos, visibleHeaders) {
         
         for (const [nombreKit, componentes] of Object.entries(kits)) {
             htmlTotal += `<div class="kit-card">`;
-            
+
             // EL BOTÓN DESPLEGABLE
+            // NUEVO: si tenemos precio calculado para este kit, se muestra junto al nombre --
+            // en ámbar con ⚠️ si es "incompleto" (algún componente no tiene stock real ahora
+            // mismo y se ha usado su precio de referencia), en verde si el precio es 100% real.
+            const precioInfo = preciosPorKit && preciosPorKit[nombreKit];
+            let precioHtml = '';
+            if (precioInfo) {
+                const colorPrecio = precioInfo.incompleto ? '#eab308' : 'var(--success)';
+                const tituloPrecio = precioInfo.incompleto
+                    ? 'Precio orientativo: algún componente de este kit no tiene stock real ahora mismo, se ha usado su precio de referencia'
+                    : 'Precio estimado sumando cantidad × precio/ud más barato disponible de cada componente (sin repetir pareja componente+sustituto)';
+                precioHtml = ` <span style="font-size:0.85rem; font-weight:normal; color:${colorPrecio};" title="${tituloPrecio}">💰 ${formatearPrecioLocal(precioInfo.total)}€${precioInfo.incompleto ? ' ⚠️' : ''}</span>`;
+            }
             htmlTotal += `<div class="kit-toggle" onclick="this.classList.toggle('active'); this.nextElementSibling.classList.toggle('hidden');">`;
-            htmlTotal += `📝 ${nombreKit} <span class="arrow">▶</span>`;
+            htmlTotal += `<span>📝 ${nombreKit}${precioHtml}</span> <span class="arrow">▶</span>`;
             htmlTotal += `</div>`;
             
             // LA TABLA OCULTA
