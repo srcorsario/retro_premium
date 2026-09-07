@@ -551,6 +551,22 @@ function obtenerDatosTMEBatchChunked(symbols, chunkSize) {
 // de comprar, o usar el asistente manual para ese componente.
 const MARGEN_TME_SOBRE_APPS_SCRIPT = 1.09;
 
+// NUEVO (fix 2026-09-07): MC7805ACTG lleva desde el principio dando problemas en TME (ya se
+// había descartado del cálculo de MARGEN_TME_SOBRE_APPS_SCRIPT por dar una relación opuesta,
+// ~0,81 en vez de ~1,09). Comprobado a fondo hoy comparando los 6 tramos guardados en
+// Variantes_TME contra el precio neto real de tme.eu: el ratio es un 1,635 CONSTANTE en los 6
+// tramos (1+, 10+, 25+, 50+, 100+, 250+) -- es decir, no es un desajuste de tramos ni un tema de
+// USD/EUR (ninguna conversión de moneda da un factor tan alto), sino un ~50% de sobreprecio que
+// ya viene así en el dato crudo que la API de TME devuelve para este símbolo concreto, ANTES
+// incluso de aplicarle nuestro margen (1,635 / 1,09 = 1,50 exacto). Lo más probable, según lo que
+// ya se sospechaba, es que "MC7805ACTG" en TME resuelva a más de un producto/variante (otro
+// fabricante o encapsulado) y la API de precio por lote no siempre esté devolviendo el mismo que
+// aparece como resultado exacto en la web. En vez de seguir parcheando con otra constante (que no
+// arreglaría un problema que no es de margen), estos símbolos se EXCLUYEN de la sincronización
+// automática de TME -- hay que introducir su precio a mano con el asistente manual, igual que ya
+// se hace con AliExpress. Añadir aquí cualquier otro ID_Componente que dé este mismo patrón.
+const EXCLUIDOS_SYNC_TME = ['MC7805ACTG'];
+
 /**
  * NUEVO: Convierte un producto devuelto por TME (con su priceGroup.elements)
  * al mismo formato [idComponente, uds, precioPackTotal, stock] que ya usamos
@@ -586,6 +602,14 @@ function sincronizarTMEAutomattic() {
 
   const idComponente = sheetComp.getRange(filaActual, 2).getValue();
   if (!idComponente) return;
+
+  // NUEVO (fix 2026-09-07): ver comentario junto a EXCLUIDOS_SYNC_TME -- para estos símbolos la
+  // API de TME da un precio poco fiable (probable colisión con otra variante/fabricante), así que
+  // avisamos y no sincronizamos automáticamente ni siquiera en el sync manual de una fila.
+  if (EXCLUIDOS_SYNC_TME.indexOf(String(idComponente)) !== -1) {
+    SpreadsheetApp.getUi().alert(`${idComponente} está excluido de la sincronización automática de TME (su precio por API no es fiable -- introdúcelo a mano con el asistente manual).`);
+    return;
+  }
 
   ss.toast(`Conectando con TME para ${idComponente}...`, "📦 Sincronizando", 10);
   const productos = obtenerDatosTMEBatch([String(idComponente)]);
@@ -634,15 +658,30 @@ function sincronizarTodoTME() {
   // por el fallo de otros símbolos ajenos en el mismo lote.
   // MODIFICADO (fix previo): un mismo ID_Componente puede aparecer en varias filas de
   // Componentes (una por proveedor); deduplicamos para no pedir el mismo símbolo dos veces.
+  // MODIFICADO (fix 2026-09-07): quitamos también los símbolos de EXCLUIDOS_SYNC_TME (ver
+  // comentario junto a esa constante) -- para esos, la propia API de TME da un precio poco
+  // fiable, así que ni siquiera merece la pena pedirlo automáticamente.
+  const idsExcluidosEncontrados = [];
   const idsComponentes = Array.from(new Set(
     datosComp
       .filter(function(row) { return String(row[colProv] || '').trim().toUpperCase() === 'TME'; })
       .map(function(row) { return row[colId]; })
       .filter(function(id) { return id; })
       .map(String)
+      .filter(function(id) {
+        if (EXCLUIDOS_SYNC_TME.indexOf(id) !== -1) {
+          idsExcluidosEncontrados.push(id);
+          return false;
+        }
+        return true;
+      })
   ));
 
-  if (idsComponentes.length === 0) return "No hay componentes para sincronizar.";
+  if (idsComponentes.length === 0) {
+    return idsExcluidosEncontrados.length > 0
+      ? `No hay componentes para sincronizar (excluidos de TME: ${Array.from(new Set(idsExcluidosEncontrados)).join(', ')} -- introdúcelos a mano).`
+      : "No hay componentes para sincronizar.";
+  }
 
   // NUEVO: dejamos constancia en el registro de ejecuciones de qué IDs se piden
   Logger.log("TME: IDs solicitados (" + idsComponentes.length + "): " + idsComponentes.join(", "));
@@ -702,6 +741,9 @@ function sincronizarTodoTME() {
   }
   if (noEncontradosDeVerdad.length > 0) {
     msg += ` Sin ningún dato en TME: ${noEncontradosDeVerdad.join(', ')}.`;
+  }
+  if (idsExcluidosEncontrados.length > 0) {
+    msg += ` Excluidos del sync automático (precio poco fiable en TME -- usa el asistente manual): ${Array.from(new Set(idsExcluidosEncontrados)).join(', ')}.`;
   }
   return msg;
 }
