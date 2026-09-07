@@ -19,6 +19,14 @@ let cacheDatosPedido = null; // se recalcula solo una vez por carga de página
 const ORDEN_PROVEEDORES = ['LCSC', 'ALIEXPRESS', 'TME'];
 const ETIQUETA_PROVEEDOR = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME' };
 
+// NUEVO: orden de PRESELECCIÓN (no de visualización -- eso lo sigue marcando ORDEN_PROVEEDORES).
+// A partir de ahora se intenta marcar TME por defecto aunque el artículo en sí salga más caro,
+// porque entre no pasar por aduanas y evitar los gastos de gestión de envío de otros couriers
+// (ver [[retro-componentes-web]] sobre FedEx/DHL/UPS) suele salir más económico en conjunto.
+// Si TME no tiene stock suficiente para cubrir la cantidad pedida, se cae al resto en el orden
+// habitual (LCSC, luego AliExpress).
+const ORDEN_PRESELECCION = ['TME', 'LCSC', 'ALIEXPRESS'];
+
 // NUEVO: Gastos de envío fijos por tienda (de momento a mano; el día que se quiera afinar por
 // pedido real se pueden leer de la hoja "Gastos_Extra" en vez de estos valores fijos).
 const GASTOS_ENVIO = { LCSC: 20, ALIEXPRESS: 0, TME: 14 };
@@ -299,9 +307,9 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     let filasHtml = '';
-    // NUEVO: la preselección automática de la opción más barata ahora se hace a nivel de GRUPO,
-    // no de fila individual -- si dos filas son pareja, solo se marca una opción en todo el
-    // grupo, porque evidentemente solo hace falta comprar uno de los dos componentes.
+    // NUEVO: la preselección automática de la opción ahora se hace a nivel de GRUPO, no de fila
+    // individual -- si dos filas son pareja, solo se marca una opción en todo el grupo, porque
+    // evidentemente solo hace falta comprar uno de los dos componentes.
     const preseleccionadoPorGrupo = {};
 
     idsNecesarios.forEach((idComp, indiceFila) => {
@@ -316,6 +324,10 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
         // desmarca automáticamente cualquier opción marcada en su fila pareja.
         const nombreGrupo = `pedido-opcion-grupo-${escapeAttr(grupo)}`;
 
+        // NUEVO: "cantidad a pedir" arranca igual que "cantidad necesaria" pero es editable por
+        // el usuario (input aparte, ver más abajo) -- el precio de cada opción se calcula SIEMPRE
+        // con esta cantidad (editable), no con la necesaria, para que al cambiarla los datos
+        // salgan más aproximados a lo que realmente se va a pagar.
         const opcionesConDatos = opciones
             .map(opt => {
                 const tiers = (tiersPorProveedor[opt.proveedor] && tiersPorProveedor[opt.proveedor][opt.literalId]) || [];
@@ -325,13 +337,28 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
             })
             .sort((a, b) => ORDEN_PROVEEDORES.indexOf(a.proveedor) - ORDEN_PROVEEDORES.indexOf(b.proveedor));
 
+        // NUEVO: la opción marcada por defecto ya NO es "la primera con stock suficiente en el
+        // orden de visualización" -- ahora se prioriza TME aunque el artículo salga más caro,
+        // para evitar aduanas y gastos de gestión de otros couriers (ver ORDEN_PRESELECCION).
+        // Solo si TME no cubre la cantidad completa se cae al resto en su orden habitual.
+        let proveedorPreseleccionado = null;
+        if (!preseleccionadoPorGrupo[grupo]) {
+            for (const proveedorPref of ORDEN_PRESELECCION) {
+                const candidata = opcionesConDatos.find(o => o.proveedor === proveedorPref);
+                if (candidata && candidata.hayStock && candidata.compra.desglose.length > 0 && candidata.compra.logrado) {
+                    proveedorPreseleccionado = proveedorPref;
+                    break;
+                }
+            }
+        }
+
         const opcionesHtml = opcionesConDatos.length === 0
             ? '<span style="color:var(--danger); font-size:12px;">Componente no encontrado en Componentes</span>'
             : opcionesConDatos.map(opt => {
                 const usable = opt.hayStock && opt.compra.desglose.length > 0;
                 const disabled = !usable ? 'disabled' : '';
                 let checked = '';
-                if (usable && opt.compra.logrado && !preseleccionadoPorGrupo[grupo]) {
+                if (usable && opt.proveedor === proveedorPreseleccionado && !preseleccionadoPorGrupo[grupo]) {
                     checked = 'checked';
                     preseleccionadoPorGrupo[grupo] = true;
                 }
@@ -355,26 +382,33 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                     .join(' + ');
                 if (!opt.hayStock || opt.compra.desglose.length === 0) {
                     textoCompra = 'Sin stock disponible';
-                    colorTexto = 'style="color:var(--danger);"';
+                    colorTexto = 'color:var(--danger);';
                 } else {
                     textoCompra = `${desgloseTexto} = ${formatearPrecioLocal(opt.compra.totalPrecio)}€`;
                     if (!opt.compra.logrado) {
                         textoCompra += ' ⚠️ no cubre toda la cantidad (stock insuficiente)';
-                        colorTexto = 'style="color:#eab308;"';
+                        colorTexto = 'color:#eab308;';
                     }
                 }
 
+                // NUEVO: data-literal-id y data-marca permiten recalcular esta misma opción más
+                // tarde (cuando el usuario edite "Cantidad a pedir") sin tener que regenerar todo
+                // el HTML de la fila -- ver actualizarFilaPorCantidad(). El texto visible ahora
+                // vive en un <span class="pedido-texto-opcion"> aparte para poder actualizarlo solo
+                // a él, conservando el estado "checked" del radio tal cual lo dejó el usuario.
                 return `
                     <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0; ${!usable ? 'opacity:0.55;' : ''}">
                         <input type="radio" name="${nombreGrupo}"
                             data-total-unidades="${opt.compra.totalUnidades}"
                             data-total-precio="${opt.compra.totalPrecio}"
-                            data-desglose="${desgloseTexto}"
+                            data-desglose="${escapeAttr(desgloseTexto)}"
                             data-logrado="${opt.compra.logrado}"
                             data-proveedor="${opt.proveedor}"
+                            data-literal-id="${escapeAttr(opt.literalId)}"
+                            data-marca="${escapeAttr(opt.marca || '')}"
                             ${checked} ${disabled}
                             class="pedido-radio-opcion">
-                        <span ${colorTexto}>${etiquetaProveedor}${etiquetaMarca} — ${textoCompra}</span>
+                        <span class="pedido-texto-opcion" style="${colorTexto}">${etiquetaProveedor}${etiquetaMarca} — ${textoCompra}</span>
                     </label>`;
             }).join('');
 
@@ -391,10 +425,16 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
 
         filasHtml += `
             <tr data-fila-pedido="${indiceFila}" data-cantidad-necesaria="${cantidadNecesaria}"
+                data-cantidad-pedida="${cantidadNecesaria}"
                 data-grupo="${escapeAttr(grupo)}" data-id-componente="${escapeAttr(idComp)}"
                 class="${tienePareja ? 'fila-con-pareja' : ''}">
                 <td>${idComp}${iconoPareja}</td>
                 <td>${cantidadNecesaria}</td>
+                <td>
+                    <input type="number" class="pedido-input-cantidad-pedida" value="${cantidadNecesaria}" min="0" step="any"
+                        title="Por defecto es igual a la cantidad necesaria -- edítala si quieres pedir otra cantidad (p.ej. para llegar al mínimo de un tramo de precio, o comprar de más)."
+                        style="width:80px; padding:4px 6px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px;">
+                </td>
                 <td>${opcionesHtml}</td>
                 <td class="pedido-celda-packs">-</td>
                 <td class="pedido-celda-precio">-</td>
@@ -402,15 +442,16 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     contenedor.innerHTML = `
-        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la cantidad necesaria a esa cantidad exacta (si necesitas menos que el tramo más bajo, se compra su mínimo). El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). "Cantidad a pedir" empieza igual que "Cantidad necesaria" pero puedes editarla libremente -- el precio se recalcula al momento. Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
                     <tr>
                         <th>Componente</th>
                         <th>Cantidad necesaria</th>
-                        <th>Proveedor a pedir</th>
                         <th>Cantidad a pedir</th>
+                        <th>Proveedor a pedir</th>
+                        <th>Desglose de compra</th>
                         <th>Precio estimado</th>
                     </tr>
                 </thead>
@@ -425,6 +466,81 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
         radio.addEventListener('change', recalcularPedido);
     });
 
+    // NUEVO: al editar "Cantidad a pedir" se recalculan al vuelo las opciones de ESA fila (precio,
+    // tramo aplicable, stock suficiente o no) sin tocar las demás filas ni perder la selección de
+    // proveedor ya hecha por el usuario, y luego se refresca el resumen/desglose general.
+    contenedor.querySelectorAll('.pedido-input-cantidad-pedida').forEach(input => {
+        input.addEventListener('input', (ev) => actualizarFilaPorCantidad(ev.target.closest('tr')));
+    });
+
+    recalcularPedido();
+}
+
+// NUEVO: recalcula el precio/desglose de TODAS las opciones (proveedores) de una fila cuando el
+// usuario cambia manualmente su "Cantidad a pedir" -- reutiliza calcularMejorCompra() con la
+// nueva cantidad en vez de la "cantidad necesaria" original, y actualiza en el DOM tanto los
+// atributos data-* de cada radio (que lee recalcularPedido) como el texto visible de cada opción,
+// conservando qué radio tenía marcado el usuario (o desmarcándolo si deja de ser viable con la
+// nueva cantidad).
+function actualizarFilaPorCantidad(tr) {
+    if (!tr) return;
+    const inputCantidad = tr.querySelector('.pedido-input-cantidad-pedida');
+    if (!inputCantidad || !cacheDatosPedido) return;
+
+    let cantidadPedida = parseNumeroES(inputCantidad.value);
+    if (cantidadPedida <= 0) {
+        // Cantidad inválida o vacía mientras el usuario sigue escribiendo -- no recalculamos
+        // todavía (evita parpadeos a "sin stock" en cada pulsación de borrado), pero tampoco
+        // dejamos datos de una cantidad anterior engañando al resumen.
+        return;
+    }
+
+    const { tiersPorProveedor } = cacheDatosPedido;
+
+    tr.querySelectorAll('.pedido-radio-opcion').forEach(radio => {
+        const proveedor = radio.getAttribute('data-proveedor');
+        const literalId = radio.getAttribute('data-literal-id');
+        const marca = radio.getAttribute('data-marca') || '';
+        const tiers = (tiersPorProveedor[proveedor] && tiersPorProveedor[proveedor][literalId]) || [];
+        const compra = calcularMejorCompra(tiers, cantidadPedida);
+        const hayStock = tiers.some(t => t.stockPacks > 0);
+        const usable = hayStock && compra.desglose.length > 0;
+
+        radio.disabled = !usable;
+        if (!usable) radio.checked = false;
+        radio.setAttribute('data-total-unidades', compra.totalUnidades);
+        radio.setAttribute('data-total-precio', compra.totalPrecio);
+        radio.setAttribute('data-logrado', compra.logrado);
+
+        const desgloseTexto = compra.desglose
+            .map(d => `${d.unidades} uds a ${formatearPrecioUnitarioLocal(d.precioUnitario)}€/ud (tramo ≥${d.udsPack}u)`)
+            .join(' + ');
+        radio.setAttribute('data-desglose', desgloseTexto);
+
+        const label = radio.closest('label');
+        const spanTexto = label ? label.querySelector('.pedido-texto-opcion') : null;
+        if (label) label.style.opacity = usable ? '1' : '0.55';
+        if (spanTexto) {
+            const etiquetaProveedor = ETIQUETA_PROVEEDOR[proveedor] || proveedor;
+            const etiquetaMarca = marca ? ` — ${marca}` : '';
+            let textoCompra;
+            let colorTexto = '';
+            if (!hayStock || compra.desglose.length === 0) {
+                textoCompra = 'Sin stock disponible';
+                colorTexto = 'color:var(--danger);';
+            } else {
+                textoCompra = `${desgloseTexto} = ${formatearPrecioLocal(compra.totalPrecio)}€`;
+                if (!compra.logrado) {
+                    textoCompra += ' ⚠️ no cubre toda la cantidad (stock insuficiente)';
+                    colorTexto = 'color:#eab308;';
+                }
+            }
+            spanTexto.setAttribute('style', colorTexto);
+            spanTexto.textContent = `${etiquetaProveedor}${etiquetaMarca} — ${textoCompra}`;
+        }
+    });
+
+    tr.setAttribute('data-cantidad-pedida', cantidadPedida);
     recalcularPedido();
 }
 
