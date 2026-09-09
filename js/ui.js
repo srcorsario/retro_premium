@@ -419,19 +419,24 @@ function renderPacksPreparables(preparablesExtra) {
         </div>`;
 }
 
-// NUEVO (2026-09-09, 2ª petición): lista compacta bajo el input "Vas a preparar" con la cantidad
-// de CADA componente que consume la reserva actual de este kit ("cantidadUsada" = "Vas a
-// preparar" × cantidad por unidad de kit) y cuánto queda de ese componente en total (almacén + en
-// camino) después de restar TODAS las reservas actuales de cualquier kit -- así se ve en vivo, al
-// escribir, tanto lo que se está pidiendo como el efecto sobre el reparto compartido. Solo se
-// muestra si hay algo reservado (info.reserva > 0); con 0 no hay nada que desglosar.
+// NUEVO (2026-09-09, 2ª petición; MODIFICADO 3ª petición): lista compacta bajo el input "Vas a
+// preparar" con la cantidad de CADA componente que consume la reserva actual de este kit
+// ("cantidadUsada" = "Vas a preparar" × cantidad por unidad de kit). Si con lo que hay (almacén +
+// en camino, restando lo que ya piden TODOS los kits reservados) no llega a cubrir esa cantidad,
+// se muestra "faltan X uds" en rojo -- así se ve exactamente cuántas unidades de ESE componente
+// necesitarías conseguir más para poder completar el número de kits que has puesto; si sí llega,
+// se muestra "(quedan X)" en gris con lo que sobraría. Solo se muestra si hay algo reservado
+// (info.reserva > 0); con 0 no hay nada que desglosar.
 function renderDetalleComponentesKit(info) {
     if (!info.reserva || info.reserva <= 0 || !info.detalle || info.detalle.length === 0) return '';
 
     const filas = info.detalle.map(d => {
-        const agotado = d.quedanTrasReparto <= 0;
-        const color = agotado ? 'color:var(--danger); font-weight:bold;' : 'color:var(--text-secondary);';
-        return `<div style="${color}" title="Stock total de ${escaparAttrStock(d.idComp)}: ${formatearCantidadStock(d.stockTotal)}">${escaparAttrStock(d.idComp)}: ${formatearCantidadStock(d.cantidadUsada)} uds ${agotado ? '⚠️' : `(quedan ${formatearCantidadStock(d.quedanTrasReparto)})`}</div>`;
+        const falta = d.quedanTrasReparto < 0;
+        const color = falta ? 'color:var(--danger); font-weight:bold;' : 'color:var(--text-secondary);';
+        const textoResto = falta
+            ? `-- faltan ${formatearCantidadStock(-d.quedanTrasReparto)} uds ⚠️`
+            : `(quedan ${formatearCantidadStock(d.quedanTrasReparto)})`;
+        return `<div style="${color}" title="Stock total de ${escaparAttrStock(d.idComp)}: ${formatearCantidadStock(d.stockTotal)}">${escaparAttrStock(d.idComp)}: necesita ${formatearCantidadStock(d.cantidadUsada)} uds ${textoResto}</div>`;
     }).join('');
 
     return `<div style="margin-top:4px; font-size:11px; line-height:1.5;">${filas}</div>`;

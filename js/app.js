@@ -385,7 +385,12 @@ function calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservas) {
                 minPreparables = preparablesPorEsteComp;
                 limitante = r.idComp;
             }
-            const quedanTrasReparto = Math.max(0, stockTotal - (reservadoPorGrupoTotal[r.grupo] || 0));
+            // MODIFICADO (2026-09-09, 3ª petición): ya NO se recorta a 0 -- si sale negativo
+            // significa que, contando lo que ya piden TODOS los kits reservados (incluido este
+            // mismo), no hay suficiente de este componente: ese valor negativo es exactamente
+            // cuánto FALTA para poder completar la cantidad que se ha puesto en "Vas a preparar"
+            // (ver renderDetalleComponentesKit en ui.js, que lo pinta como "faltan X uds").
+            const quedanTrasReparto = stockTotal - (reservadoPorGrupoTotal[r.grupo] || 0);
             detalle.push({
                 idComp: r.idComp,
                 cantidadPorUnidad: r.cantidad,
