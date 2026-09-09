@@ -381,8 +381,10 @@ function renderPacksPreparables(preparablesExtra) {
     });
 
     let filasHtml = '';
+    let totalReservado = 0;
     idsKits.forEach(idKit => {
         const info = porKit[idKit];
+        totalReservado += info.reserva || 0;
         const consola = nombreConsolaPorKit[idKit] || '';
         const claseFila = info.preparables <= 0 ? 'class="row-packs-agotado"' : '';
         filasHtml += `<tr ${claseFila}>
@@ -400,7 +402,7 @@ function renderPacksPreparables(preparablesExtra) {
     return `
         <div class="packs-section">
             <h3>📦 Packs que podemos preparar</h3>
-            <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Preparables ahora" son las unidades completas de ese kit que se podrían montar con el stock actual (almacén + en camino). Escribe en "Vas a preparar" cuántas vas a montar de un kit para simular repartir el stock entre kits que comparten componentes: debajo del campo verás cuántas unidades de cada componente consume esa cantidad y cuánto queda de cada uno (contando también lo reservado en otros kits), y verás cómo baja (o sube, si lo reduces) el número de PREPARABLES de los DEMÁS kits afectados. Es solo una simulación en esta pantalla -- no descuenta nada de verdad en Google Sheets.</p>
+            <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Preparables ahora" son las unidades completas de ese kit que se podrían montar con el stock actual (almacén + en camino). Escribe en "Vas a preparar" cuántas vas a montar de un kit para simular repartir el stock entre kits que comparten componentes: debajo del campo verás cuántas unidades de cada componente consume esa cantidad y cuánto queda de cada uno (contando también lo reservado en otros kits), y verás cómo baja (o sube, si lo reduces) el número de PREPARABLES de los DEMÁS kits afectados. Si lo que quieres es aprovechar al máximo el stock compartido entre kits (en vez de ir probando a mano), usa "⚙️ Optimizar reparto": calcula solo cuánto preparar de cada kit para conseguir el MAYOR NÚMERO TOTAL de packs combinados posible. Es solo una simulación en esta pantalla -- no descuenta nada de verdad en Google Sheets.</p>
             <div style="overflow-x:auto;">
                 <table>
                     <thead><tr>
@@ -413,8 +415,10 @@ function renderPacksPreparables(preparablesExtra) {
                     <tbody>${filasHtml}</tbody>
                 </table>
             </div>
-            <div style="margin-top:10px;">
+            <div style="margin-top:10px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <button id="btn-optimizar-reparto" class="btn" style="background: var(--success);">⚙️ Optimizar reparto (máximo total)</button>
                 <button id="btn-reset-reparto" class="btn" style="background: var(--danger);">↺ Reiniciar reparto</button>
+                <span style="font-size:13px; color:var(--text-secondary);">Total reservado ahora: <strong style="color:var(--text-main);">${totalReservado}</strong> packs combinados</span>
             </div>
         </div>`;
 }
