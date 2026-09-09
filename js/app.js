@@ -328,6 +328,21 @@ function calcularStockPorGrupo(datosStock, sustitucionesMap) {
 // mismo hueco (mismo grupo), nos quedamos con la cantidad mayor de las dos -- ambas representan
 // el mismo hueco físico, así que basta con tener stock combinado de cualquiera de los dos.
 function calcularRequisitosPorKit(datosKits, sustitucionesMap) {
+    // MODIFICADO (2026-09-09, 5ª petición): Kits_Consolas sigue listando siempre el componente
+    // "original" (descatalogado) para ese hueco -- por diseño, las sincronizaciones de Kits NUNCA
+    // tocan Kits_Consolas al gestionar una sustitución (ver hoja Sustituciones). Pero el usuario
+    // detectó que eso hacía que "Packs que podemos preparar" mostrara el nombre del componente
+    // ORIGINAL (p.ej. EEUFS0J221) aunque el stock real esté bajo su sustituto (p.ej.
+    // 6.3ZLH220MEFC5X11) -- confuso, porque ese original puede no tener ni una unidad en stock.
+    // Se calcula aquí (una sola vez) el mapa inverso grupo -> [sustitutos] para que cada requisito
+    // lleve consigo con qué ID(s) está realmente cubierto ese hueco físico -- ui.js lo usa para
+    // mostrar el sustituto como nombre principal (ver etiquetaComponenteSustituto).
+    const sustitutosPorGrupo = {};
+    Object.entries(sustitucionesMap || {}).forEach(([idNuevo, idOriginal]) => {
+        if (!sustitutosPorGrupo[idOriginal]) sustitutosPorGrupo[idOriginal] = [];
+        sustitutosPorGrupo[idOriginal].push(idNuevo);
+    });
+
     const porGrupo = {};
     (datosKits || []).forEach(row => {
         const idKit = row['ID_Kit'];
@@ -337,7 +352,7 @@ function calcularRequisitosPorKit(datosKits, sustitucionesMap) {
         const grupo = sustitucionesMap[idComp] || idComp;
         if (!porGrupo[idKit]) porGrupo[idKit] = {};
         if (!porGrupo[idKit][grupo] || cantidad > porGrupo[idKit][grupo].cantidad) {
-            porGrupo[idKit][grupo] = { grupo, cantidad, idComp };
+            porGrupo[idKit][grupo] = { grupo, cantidad, idComp, sustitutos: sustitutosPorGrupo[grupo] || [] };
         }
     });
     const resultado = {};
@@ -370,6 +385,7 @@ function calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservas) {
         const reservaEsteKit = reservas[idKit] || 0;
         let minPreparables = Infinity;
         let limitante = null;
+        let limitanteSustitutos = [];
         // NUEVO (2026-09-09, 2ª petición): desglose por componente de ESTE kit con la reserva
         // actual -- cuántas unidades consume ("Vas a preparar" × cantidad por kit) y cuánto queda
         // del stock total de ese grupo de componente después de TODAS las reservas actuales (de
@@ -384,6 +400,7 @@ function calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservas) {
             if (preparablesPorEsteComp < minPreparables) {
                 minPreparables = preparablesPorEsteComp;
                 limitante = r.idComp;
+                limitanteSustitutos = r.sustitutos || [];
             }
             // MODIFICADO (2026-09-09, 3ª petición): ya NO se recorta a 0 -- si sale negativo
             // significa que, contando lo que ya piden TODOS los kits reservados (incluido este
@@ -393,6 +410,7 @@ function calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservas) {
             const quedanTrasReparto = stockTotal - (reservadoPorGrupoTotal[r.grupo] || 0);
             detalle.push({
                 idComp: r.idComp,
+                sustitutos: r.sustitutos || [], // NUEVO (5ª petición) -- ver comentario en calcularRequisitosPorKit
                 cantidadPorUnidad: r.cantidad,
                 cantidadUsada: reservaEsteKit * r.cantidad,
                 stockTotal,
@@ -400,7 +418,7 @@ function calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservas) {
             });
         });
         if (minPreparables === Infinity) minPreparables = 0;
-        resultado[idKit] = { preparables: minPreparables, limitante, reserva: reservaEsteKit, detalle };
+        resultado[idKit] = { preparables: minPreparables, limitante, limitanteSustitutos, reserva: reservaEsteKit, detalle };
     });
     return resultado;
 }

@@ -391,7 +391,7 @@ function renderPacksPreparables(preparablesExtra) {
             <td>${idKit}</td>
             <td>${consola}</td>
             <td style="font-weight:bold;">${info.preparables}</td>
-            <td>${info.limitante ? escaparAttrStock(info.limitante) : '-'}</td>
+            <td>${info.limitante ? etiquetaComponenteSustituto(info.limitante, info.limitanteSustitutos) : '-'}</td>
             <td>
                 <input type="number" class="packs-input-reserva" data-kit="${escaparAttrStock(idKit)}" min="0" step="1" value="${info.reserva || ''}" placeholder="0">
                 ${renderDetalleComponentesKit(info)}
@@ -423,6 +423,20 @@ function renderPacksPreparables(preparablesExtra) {
         </div>`;
 }
 
+// NUEVO (2026-09-09, 5ª petición): Kits_Consolas siempre lista el componente "original" para cada
+// hueco (nunca se toca al gestionar una sustitución, ver hoja Sustituciones), pero cuando ese
+// original está descatalogado el stock real vive bajo su sustituto -- mostrar solo el nombre
+// original confundía al usuario, que no tiene NADA en stock con ese ID exacto. Si el requisito
+// trae sustitutos (r.sustitutos, calculado en app.js/calcularRequisitosPorKit), se muestra el/los
+// sustituto(s) como nombre principal (que es lo que hay que ir a coger físicamente al almacén) con
+// el original como referencia secundaria; si no tiene sustituto conocido, se muestra tal cual.
+function etiquetaComponenteSustituto(idComp, sustitutos) {
+    const base = escaparAttrStock(idComp);
+    if (!sustitutos || sustitutos.length === 0) return base;
+    const listaSust = sustitutos.map(escaparAttrStock).join(', ');
+    return `${listaSust} <span style="color:#3b82f6; font-size:0.85em;" title="En Kits_Consolas este hueco figura como ${base}, pero el stock real está bajo su sustituto (hoja Sustituciones) -- se cuenta junto con ${base}, es el mismo hueco físico">💬 (sustituye a ${base})</span>`;
+}
+
 // NUEVO (2026-09-09, 2ª petición; MODIFICADO 3ª petición): lista compacta bajo el input "Vas a
 // preparar" con la cantidad de CADA componente que consume la reserva actual de este kit
 // ("cantidadUsada" = "Vas a preparar" × cantidad por unidad de kit). Si con lo que hay (almacén +
@@ -440,7 +454,7 @@ function renderDetalleComponentesKit(info) {
         const textoResto = falta
             ? `-- faltan ${formatearCantidadStock(-d.quedanTrasReparto)} uds ⚠️`
             : `(quedan ${formatearCantidadStock(d.quedanTrasReparto)})`;
-        return `<div style="${color}" title="Stock total de ${escaparAttrStock(d.idComp)}: ${formatearCantidadStock(d.stockTotal)}">${escaparAttrStock(d.idComp)}: necesita ${formatearCantidadStock(d.cantidadUsada)} uds ${textoResto}</div>`;
+        return `<div style="${color}" title="Stock total de ${escaparAttrStock(d.idComp)}: ${formatearCantidadStock(d.stockTotal)}">${etiquetaComponenteSustituto(d.idComp, d.sustitutos)}: necesita ${formatearCantidadStock(d.cantidadUsada)} uds ${textoResto}</div>`;
     }).join('');
 
     return `<div style="margin-top:4px; font-size:11px; line-height:1.5;">${filas}</div>`;
