@@ -287,6 +287,122 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
     return resultado;
 }
 
+// --- NUEVO (2026-09-09): PESTAÑA STOCK FÍSICO -- "Stock en camino" + "Packs que podemos
+// preparar" con balanceo/reparto de componentes compartidos entre kits ---
+
+// Reservas del simulador de balanceo: idKit -> cuántas unidades de ese kit el usuario está
+// "probando" a preparar. Vive solo en memoria (se resetea al recargar la página) -- es una
+// simulación visual, no escribe nada en Google Sheets (a petición expresa del usuario).
+let reservasPorKit = {};
+
+// NUEVO: datos base (sin aplicar reservas) de la última carga de la pestaña Stock Físico -- se
+// guardan para recalcular solo "cuántos podemos preparar" al tocar una reserva, sin volver a
+// pedir Stock_Almacen/Kits_Consolas/Sustituciones a Google Sheets cada vez (mismo patrón que
+// cacheKitsBase/recalcularYRenderizarKits).
+let cacheStockBase = null;
+
+// Las hojas de Google Sheets guardan los números con coma decimal -- reutilizamos el mismo
+// helper que ya usa el resto de app.js (parseNumeroES) para leer Uds_Disponibles/Stock_En_Camino.
+
+// NUEVO: por cada "grupo" de componente (el ID_Original si tiene sustituto en la hoja
+// Sustituciones, o su propio ID si no -- dos variantes intercambiables para el mismo hueco físico
+// de una placa), suma el stock físico total disponible: lo que ya está en almacén
+// (Uds_Disponibles) MÁS lo que está en camino (Stock_En_Camino) -- a petición del usuario, el
+// stock en camino cuenta también para estos cálculos de planificación, aunque físicamente todavía
+// no haya llegado.
+function calcularStockPorGrupo(datosStock, sustitucionesMap) {
+    const stockPorGrupo = {};
+    (datosStock || []).forEach(row => {
+        const id = (row['ID_Componente'] || '').trim();
+        if (!id) return;
+        const grupo = sustitucionesMap[id] || id;
+        const disponible = parseNumeroES(row['Uds_Disponibles']);
+        const enCamino = parseNumeroES(row['Stock_En_Camino']);
+        stockPorGrupo[grupo] = (stockPorGrupo[grupo] || 0) + disponible + enCamino;
+    });
+    return stockPorGrupo;
+}
+
+// NUEVO: por cada kit, la lista de "huecos" (grupos de componente) que necesita y cuántas
+// unidades de cada uno. Si un kit tiene el componente Y su sustituto como filas separadas para el
+// mismo hueco (mismo grupo), nos quedamos con la cantidad mayor de las dos -- ambas representan
+// el mismo hueco físico, así que basta con tener stock combinado de cualquiera de los dos.
+function calcularRequisitosPorKit(datosKits, sustitucionesMap) {
+    const porGrupo = {};
+    (datosKits || []).forEach(row => {
+        const idKit = row['ID_Kit'];
+        const idComp = (row['ID_Componente'] || '').trim();
+        const cantidad = parseFloat(row['Cantidad']) || 0;
+        if (!idKit || !idComp || cantidad <= 0) return;
+        const grupo = sustitucionesMap[idComp] || idComp;
+        if (!porGrupo[idKit]) porGrupo[idKit] = {};
+        if (!porGrupo[idKit][grupo] || cantidad > porGrupo[idKit][grupo].cantidad) {
+            porGrupo[idKit][grupo] = { grupo, cantidad, idComp };
+        }
+    });
+    const resultado = {};
+    Object.entries(porGrupo).forEach(([idKit, gruposObj]) => {
+        resultado[idKit] = Object.values(gruposObj);
+    });
+    return resultado;
+}
+
+// NUEVO: el corazón del simulador de balanceo. Dado cuánto stock hay de cada grupo de componente
+// y cuánto ha "reservado" el usuario de cada kit (para probar repartos), calcula para CADA kit
+// cuántas unidades más se podrían preparar ahora mismo TENIENDO EN CUENTA lo que los demás kits
+// ya tienen reservado (no lo que ese kit tiene reservado a sí mismo, que no se resta de su propia
+// disponibilidad -- así el número refleja "hasta dónde podrías subir la reserva de este kit sin
+// tocar las de los demás"). Cambiar la reserva de un kit compartido hace bajar (o subir, si se
+// reduce) el número de OTROS kits que usan el mismo componente -- eso es "repartir" el stock.
+function calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservas) {
+    // Cuánto se ha reservado en total (entre TODOS los kits) de cada grupo de componente.
+    const reservadoPorGrupoTotal = {};
+    Object.entries(requisitosPorKit).forEach(([idKit, requisitos]) => {
+        const reservado = reservas[idKit] || 0;
+        if (reservado <= 0) return;
+        requisitos.forEach(r => {
+            reservadoPorGrupoTotal[r.grupo] = (reservadoPorGrupoTotal[r.grupo] || 0) + (reservado * r.cantidad);
+        });
+    });
+
+    const resultado = {};
+    Object.entries(requisitosPorKit).forEach(([idKit, requisitos]) => {
+        const reservaEsteKit = reservas[idKit] || 0;
+        let minPreparables = Infinity;
+        let limitante = null;
+        requisitos.forEach(r => {
+            const stockTotal = stockPorGrupo[r.grupo] || 0;
+            // Lo que otros kits (no este) ya han reservado de este mismo grupo de componente.
+            const comprometidoOtros = (reservadoPorGrupoTotal[r.grupo] || 0) - (reservaEsteKit * r.cantidad);
+            const disponibleParaEsteKit = Math.max(0, stockTotal - comprometidoOtros);
+            const preparablesPorEsteComp = Math.floor(disponibleParaEsteKit / r.cantidad);
+            if (preparablesPorEsteComp < minPreparables) {
+                minPreparables = preparablesPorEsteComp;
+                limitante = r.idComp;
+            }
+        });
+        if (minPreparables === Infinity) minPreparables = 0;
+        resultado[idKit] = { preparables: minPreparables, limitante, reserva: reservaEsteKit };
+    });
+    return resultado;
+}
+
+// NUEVO: recalcula "Packs que podemos preparar" con las reservas actuales y vuelve a pintar la
+// pestaña Stock Físico, reutilizando los datos ya cargados (cacheStockBase) -- se llama desde el
+// listener de los inputs de reserva y del botón "Reiniciar reparto" (delegación de eventos, mismo
+// patrón que recalcularYRenderizarKits).
+function recalcularYRenderizarStock() {
+    if (!cacheStockBase) return;
+    const preparables = calcularPreparablesPorKit(cacheStockBase.requisitosPorKit, cacheStockBase.stockPorGrupo, reservasPorKit);
+    const extra = {
+        preparables: {
+            porKit: preparables,
+            nombreConsolaPorKit: cacheStockBase.nombreConsolaPorKit
+        }
+    };
+    renderTabla('contenedor-tabla', cacheStockBase.datosStock, 'Stock_Almacen', extra);
+}
+
 // NUEVO: Orden de proveedor para que, dentro de un mismo ID_Componente, salgan siempre en el mismo orden
 const ORDEN_PROVEEDOR = { LCSC: 0, ALIEXPRESS: 1, TME: 2 };
 
@@ -345,6 +461,48 @@ async function cargarVista(nombrePestana) {
         extra = { preciosPorKit: calcularPreciosPorKit(datos, datosComponentes, sustituciones, tamanoLote), tamanoLote };
     }
 
+    // NUEVO (2026-09-09): en la pestaña Stock Físico calculamos también "Packs que podemos
+    // preparar" -- necesita Kits_Consolas (qué componentes y cuántos usa cada kit) y Sustituciones
+    // (para tratar un componente y su sustituto como el mismo hueco físico). Las reservas del
+    // simulador de balanceo (reservasPorKit) NO se resetean aquí a propósito: si el usuario estaba
+    // repartiendo stock entre kits y la pestaña se recarga con los mismos kits, el reparto sigue
+    // donde lo dejó.
+    if (nombrePestana === 'Stock_Almacen') {
+        const datosKits = await obtenerDatos('Kits_Consolas');
+        let sustituciones = [];
+        if (ENV.SHEETS['Sustituciones']) {
+            sustituciones = await obtenerDatos('Sustituciones');
+        }
+        const sustitucionesMap = {};
+        sustituciones.forEach(row => {
+            const idNuevo = (row['ID_Nuevo'] || '').trim();
+            const idOriginal = (row['ID_Original'] || '').trim();
+            if (idNuevo && idOriginal) sustitucionesMap[idNuevo] = idOriginal;
+        });
+
+        const requisitosPorKit = calcularRequisitosPorKit(datosKits, sustitucionesMap);
+        const stockPorGrupo = calcularStockPorGrupo(datos, sustitucionesMap);
+        const nombreConsolaPorKit = {};
+        (datosKits || []).forEach(row => {
+            if (row['ID_Kit'] && !nombreConsolaPorKit[row['ID_Kit']]) {
+                nombreConsolaPorKit[row['ID_Kit']] = row['Consola'] || '';
+            }
+        });
+
+        // Descarta reservas de kits que ya no existen en la última carga (p.ej. si se borró un kit)
+        Object.keys(reservasPorKit).forEach(idKit => {
+            if (!requisitosPorKit[idKit]) delete reservasPorKit[idKit];
+        });
+
+        cacheStockBase = { datosStock: datos, requisitosPorKit, stockPorGrupo, nombreConsolaPorKit };
+        extra = {
+            preparables: {
+                porKit: calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservasPorKit),
+                nombreConsolaPorKit
+            }
+        };
+    }
+
     renderTabla('contenedor-tabla', datos, nombrePestana, extra);
 
     if (tituloVista) tituloVista.innerText = `${nombrePestana} (${datos.length} registros)`;
@@ -387,6 +545,49 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!isNaN(valor) && valor > 0) {
                 recalcularYRenderizarKits(valor);
             }
+        }
+    });
+
+    // NUEVO (2026-09-09): input "Vas a preparar" de cada fila del simulador "Packs que podemos
+    // preparar" (pestaña Stock Físico, ver ui.js) -- se regenera cada vez que se repinta la
+    // pestaña, así que se escucha por delegación (mismo patrón que "kits-tamano-lote"). Aquí sí se
+    // usa 'input' (no 'change', a diferencia de "kits-tamano-lote") para que el reparto entre kits
+    // reaccione al momento mientras se escribe -- pero eso significa reconstruir la tabla entera en
+    // cada tecla, lo que destruiría y recrearía la propia casilla que se está editando y le haría
+    // perder el foco a media escritura (el mismo problema que "kits-tamano-lote" evita usando
+    // 'change'). Para no perder el foco: se guarda qué kit y qué posición del cursor tenía el input
+    // antes de repintar, y se restaura en el input nuevo (mismo data-kit) justo después.
+    document.addEventListener('input', (e) => {
+        if (e.target && e.target.classList && e.target.classList.contains('packs-input-reserva')) {
+            const idKit = e.target.getAttribute('data-kit');
+            if (!idKit) return;
+            const valor = parseInt(e.target.value, 10);
+            reservasPorKit[idKit] = (!isNaN(valor) && valor > 0) ? valor : 0;
+
+            const cursorPos = e.target.selectionStart;
+            recalcularYRenderizarStock();
+
+            const nuevoInput = document.querySelector(`.packs-input-reserva[data-kit="${CSS.escape(idKit)}"]`);
+            if (nuevoInput) {
+                nuevoInput.focus();
+                try {
+                    // type="number" no soporta setSelectionRange en algunos navegadores (lanza
+                    // InvalidStateError) -- si falla, el foco ya se restauró igualmente, solo se
+                    // pierde la posición exacta del cursor dentro del número.
+                    if (cursorPos !== null && typeof nuevoInput.setSelectionRange === 'function') {
+                        nuevoInput.setSelectionRange(cursorPos, cursorPos);
+                    }
+                } catch (err) { /* ver comentario arriba -- no es un fallo real */ }
+            }
+        }
+    });
+
+    // NUEVO: botón "↺ Reiniciar reparto" del simulador -- borra todas las reservas de prueba y
+    // vuelve a mostrar cuántos packs se podrían preparar de cada kit de forma independiente.
+    document.addEventListener('click', (e) => {
+        if (e.target.closest('#btn-reset-reparto')) {
+            reservasPorKit = {};
+            recalcularYRenderizarStock();
         }
     });
 });

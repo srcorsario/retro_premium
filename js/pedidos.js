@@ -24,8 +24,16 @@ export async function inicializarModuloPedidos() {
     // engancha por delegación de eventos más abajo en vez de un addEventListener directo.
     const btnCancelStock = document.getElementById('btn-cancel-stock');
     const btnSubmitStock = document.getElementById('btn-submit-stock');
+    // NUEVO (2026-09-09): modal "🚚 Añadir Stock en Camino" y modal "✅ Recibir" (traspaso parcial)
+    // -- mismo patrón que el resto: botones que abren estos modales se inyectan dinámicamente en
+    // ui.js (#btn-add-stock-camino en la barra de herramientas, .btn-recibir-stock por fila), así
+    // que se enganchan por delegación de eventos más abajo.
+    const btnCancelStockCamino = document.getElementById('btn-cancel-stock-camino');
+    const btnSubmitStockCamino = document.getElementById('btn-submit-stock-camino');
+    const btnCancelRecibir = document.getElementById('btn-cancel-recibir');
+    const btnSubmitRecibir = document.getElementById('btn-submit-recibir');
 
-    if (!select || !btnVerificar || !btnSyncTodo || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnCancelStock || !btnSubmitStock) return;
+    if (!select || !btnVerificar || !btnSyncTodo || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnCancelStock || !btnSubmitStock || !btnCancelStockCamino || !btnSubmitStockCamino || !btnCancelRecibir || !btnSubmitRecibir) return;
 
     const datosKits = await obtenerDatos('Kits_Consolas');
     const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
@@ -48,13 +56,27 @@ export async function inicializarModuloPedidos() {
     btnSubmitTme.addEventListener('click', enviarDatosTME);
     btnCancelStock.addEventListener('click', cerrarModalStock);
     btnSubmitStock.addEventListener('click', enviarDatosStock);
+    btnCancelStockCamino.addEventListener('click', cerrarModalStockCamino);
+    btnSubmitStockCamino.addEventListener('click', enviarDatosStockCamino);
+    btnCancelRecibir.addEventListener('click', cerrarModalRecibir);
+    btnSubmitRecibir.addEventListener('click', enviarDatosRecibir);
 
-    // NUEVO: #btn-add-stock se regenera cada vez que ui.js vuelve a pintar la pestaña Stock Físico
-    // (renderTabla reemplaza el contenedor entero), así que un addEventListener normal se perdería
-    // en cuanto se cambiara de pestaña y se volviera. Delegando el click en document (que sí es
-    // estable) el botón funciona sin importar cuántas veces se haya regenerado.
+    // NUEVO: #btn-add-stock (y ahora también #btn-add-stock-camino y .btn-recibir-stock) se
+    // regeneran cada vez que ui.js vuelve a pintar la pestaña Stock Físico (renderTabla reemplaza
+    // el contenedor entero), así que un addEventListener normal se perdería en cuanto se cambiara
+    // de pestaña y se volviera. Delegando el click en document (que sí es estable) los botones
+    // funcionan sin importar cuántas veces se hayan regenerado.
     document.addEventListener('click', (e) => {
         if (e.target.closest('#btn-add-stock')) abrirModalStock();
+
+        if (e.target.closest('#btn-add-stock-camino')) abrirModalStockCamino();
+
+        const btnRecibir = e.target.closest('.btn-recibir-stock');
+        if (btnRecibir) {
+            const idComp = btnRecibir.getAttribute('data-id');
+            const maxEnCamino = parseFloat(btnRecibir.getAttribute('data-max')) || 0;
+            abrirModalRecibir(idComp, maxEnCamino);
+        }
     });
 
     pedidosInicializado = true;
@@ -79,11 +101,16 @@ async function verificarStock() {
         ]);
 
         const requisitosKit = datosKits.filter(k => k['ID_Kit'] === kitSeleccionado);
+        // NUEVO (2026-09-09): el "stock disponible" para verificar un kit ya cuenta también lo que
+        // está "en camino" (pedido pero todavía sin llegar), no solo lo físico en almacén -- a
+        // petición del usuario, para planificar con lo que va a estar disponible pronto. Se guarda
+        // por separado (uds/enCamino) para poder detallarlo en el log de abajo.
         const stockMapa = {};
         datosStock.forEach(s => {
             const idComp = s['ID_Componente'];
-            const uds = parseFloat(s['Uds_Disponibles']) || 0;
-            stockMapa[idComp] = (stockMapa[idComp] || 0) + uds;
+            if (!stockMapa[idComp]) stockMapa[idComp] = { uds: 0, enCamino: 0 };
+            stockMapa[idComp].uds += parseFloat(s['Uds_Disponibles']) || 0;
+            stockMapa[idComp].enCamino += parseFloat(s['Stock_En_Camino']) || 0;
         });
 
         let todoOk = true;
@@ -97,14 +124,20 @@ async function verificarStock() {
         });
 
         for (const [idComp, cantidadNecesaria] of Object.entries(requisitosSumados)) {
-            const disponible = stockMapa[idComp] || 0;
+            const stockComp = stockMapa[idComp] || { uds: 0, enCamino: 0 };
+            const disponible = stockComp.uds + stockComp.enCamino;
+            // NUEVO: si hay algo "en camino" contando para el total, se detalla el desglose para
+            // que quede claro cuánto es físico ahora mismo y cuánto todavía no ha llegado.
+            const detalleCamino = stockComp.enCamino > 0
+                ? ` (${stockComp.uds} en almacén + ${stockComp.enCamino} en camino)`
+                : '';
             let estado, icono;
             if (disponible < cantidadNecesaria) {
                 todoOk = false;
-                estado = `Faltan ${cantidadNecesaria - disponible} uds`;
+                estado = `Faltan ${cantidadNecesaria - disponible} uds (disponibles: ${disponible}${detalleCamino})`;
                 icono = '🔴';
             } else {
-                estado = `OK (Disponibles: ${disponible})`;
+                estado = `OK (Disponibles: ${disponible}${detalleCamino})`;
                 icono = '🟢';
             }
             logDetallado.push(`${icono} <strong>${idComp}</strong>: Necesita ${cantidadNecesaria} - ${estado}`);
@@ -326,6 +359,124 @@ async function enviarDatosStock() {
             location.reload();
         } else {
             mostrarMensaje('msg-pedidos', '✅ Stock actualizado. Refresca la web cuando quieras.', false);
+        }
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
+    }
+}
+
+// --- NUEVO (2026-09-09): MÓDULO STOCK EN CAMINO (mismo patrón que "➕ Añadir Stock", pero
+// escribe en la columna Stock_En_Camino en vez de Uds_Disponibles -- ver guardarStockEnCamino en
+// Codigo.gs) ---
+async function abrirModalStockCamino() {
+    const modal = document.getElementById('modal-stock-camino');
+    const selectComp = document.getElementById('stock-camino-id-componente');
+    if (modal && selectComp) {
+        if (selectComp.options.length === 0) {
+            const datosComp = await obtenerDatos('Componentes');
+            const idsUnicos = [...new Set(datosComp.map(c => c['ID_Componente']).filter(id => id))]
+                .sort((a, b) => String(a).localeCompare(String(b), 'es', { sensitivity: 'base' }));
+            idsUnicos.forEach(id => {
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = id;
+                selectComp.appendChild(opt);
+            });
+        }
+        modal.style.display = 'flex';
+    }
+}
+
+function cerrarModalStockCamino() {
+    const modal = document.getElementById('modal-stock-camino');
+    if (modal) modal.style.display = 'none';
+}
+
+async function enviarDatosStockCamino() {
+    const idComp = document.getElementById('stock-camino-id-componente').value;
+    const cantidad = document.getElementById('stock-camino-cantidad').value;
+
+    if (!idComp || !cantidad || cantidad <= 0) {
+        mostrarMensaje('msg-pedidos', '❌ Selecciona un componente e indica una cantidad válida.', true);
+        return;
+    }
+
+    cerrarModalStockCamino();
+    mostrarMensaje('msg-pedidos', '🔄 Registrando stock en camino en Google Sheets...', false);
+
+    const exito = await actualizarDatos({
+        action: 'update_stock_en_camino',
+        idComponente: idComp,
+        cantidad: cantidad
+    });
+
+    if (exito) {
+        if (confirm("✅ ¡Stock en camino registrado!\n\nPulsa Aceptar para refrescar la web y ver los cambios.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '✅ Stock en camino registrado. Refresca la web cuando quieras.', false);
+        }
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
+    }
+}
+
+// --- NUEVO (2026-09-09): MÓDULO RECIBIR STOCK EN CAMINO (traspaso PARCIAL editable a
+// Uds_Disponibles -- ver recibirStockEnCamino en Codigo.gs). Se abre desde el botón "✅ Recibir"
+// de cada fila de la pestaña Stock Físico (ver .btn-recibir-stock en ui.js/pedidos.js), que ya
+// trae el ID de componente y el máximo que hay en camino (no se puede recibir más de eso). ---
+let recibirIdComponenteActual = null;
+let recibirMaxActual = 0;
+
+function abrirModalRecibir(idComponente, maxEnCamino) {
+    const modal = document.getElementById('modal-recibir');
+    const info = document.getElementById('recibir-info');
+    const input = document.getElementById('recibir-cantidad');
+    if (!modal || !info || !input) return;
+
+    recibirIdComponenteActual = idComponente;
+    recibirMaxActual = maxEnCamino;
+
+    info.textContent = `${idComponente}: hay ${maxEnCamino} uds en camino.`;
+    input.value = maxEnCamino; // por defecto, recibir todo -- editable si solo llegó parte del pedido
+    input.max = maxEnCamino;
+    modal.style.display = 'flex';
+}
+
+function cerrarModalRecibir() {
+    const modal = document.getElementById('modal-recibir');
+    if (modal) modal.style.display = 'none';
+    recibirIdComponenteActual = null;
+    recibirMaxActual = 0;
+}
+
+async function enviarDatosRecibir() {
+    const cantidad = parseFloat(document.getElementById('recibir-cantidad').value);
+    const idComp = recibirIdComponenteActual;
+
+    if (!idComp || !cantidad || cantidad <= 0) {
+        mostrarMensaje('msg-pedidos', '❌ Indica una cantidad recibida válida.', true);
+        return;
+    }
+    if (cantidad > recibirMaxActual) {
+        mostrarMensaje('msg-pedidos', `❌ Solo hay ${recibirMaxActual} uds en camino de ${idComp}, no se pueden recibir ${cantidad}.`, true);
+        return;
+    }
+
+    cerrarModalRecibir();
+    mostrarMensaje('msg-pedidos', '🔄 Traspasando a almacén en Google Sheets...', false);
+
+    const exito = await actualizarDatos({
+        action: 'recibir_stock_en_camino',
+        idComponente: idComp,
+        cantidad: cantidad
+    });
+
+    if (exito) {
+        if (confirm("✅ ¡Stock recibido y traspasado a almacén!\n\nPulsa Aceptar para refrescar la web y ver los cambios.")) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', '✅ Stock recibido. Refresca la web cuando quieras.', false);
         }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);

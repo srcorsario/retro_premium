@@ -94,6 +94,16 @@ export function renderTabla(contenedorID, datos, nombrePestana, extra) {
         return;
     }
 
+    // NUEVO (2026-09-09): la pestaña Stock Físico tiene su propio render -- columnas calculadas
+    // (Stock en camino, Stock total), botón "Recibir" por fila y la sección "Packs que podemos
+    // preparar" con el simulador de balanceo (ver renderStockAlmacen más abajo).
+    if (nombrePestana === 'Stock_Almacen') {
+        renderStockAlmacen(container, datosLimpios, extra);
+        const tituloVista = document.getElementById('titulo-vista');
+        if (tituloVista) tituloVista.innerText = `Stock Físico (${datosLimpios.length} componentes)`;
+        return;
+    }
+
     // Si es la pestaña de Variantes LCSC, AliExpress o TME, agrupamos por componente
     if (nombrePestana === 'Variantes_LCSC' || nombrePestana === 'Variantes_AliExpress' || nombrePestana === 'Variantes_TME') {
         container.innerHTML = renderVariantesAgrupadas(datosLimpios);
@@ -172,20 +182,9 @@ export function renderTabla(contenedorID, datos, nombrePestana, extra) {
     let tableHtml = '';
 
     datosLimpios.forEach(fila => {
-        let esAlerta = false;
-        
-        // Lógica de negocio visual: Si estamos en Stock y las unidades son <= mínimas
-        if (nombrePestana === 'Stock_Almacen') {
-            const uds = parseFloat(fila['Uds_Disponibles']) || 0;
-            const min = parseFloat(fila['Stock_Minimo_Alerta']) || 0;
-            if (uds <= min && uds > 0) esAlerta = true;
-            if (uds === 0) esAlerta = 'critico';
-        }
-        
-        // MODIFICADO: Se elimina esSinStock de la clase de la fila para pintar solo el texto
-        let claseFila = esAlerta === 'critico' ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
-        
-        htmlBody += `<tr ${claseFila}>`;
+        // NOTA: la alerta de stock mínimo/crítico vivía aquí antes -- ahora Stock_Almacen tiene su
+        // propio render (ver renderStockAlmacen), así que este bucle genérico ya no la necesita.
+        htmlBody += `<tr>`;
         visibleHeaders.forEach(header => {
             let cellContent = fila[header] || '';
 
@@ -215,23 +214,11 @@ export function renderTabla(contenedorID, datos, nombrePestana, extra) {
         </table>
     `;
 
-    // NUEVO: en la pestaña Stock Físico se antepone un botón para abrir el modal "➕ Añadir Stock"
-    // (ver pedidos.js -- se engancha por delegación de eventos porque este botón se regenera cada
-    // vez que se recarga la pestaña, así que un listener puesto aquí se perdería en el siguiente
-    // render) -- así se puede sumar stock recién llegado sin ir a editar Google Sheets a mano.
-    let toolbarHtml = '';
-    if (nombrePestana === 'Stock_Almacen') {
-        toolbarHtml = `
-            <div style="margin-bottom:12px;">
-                <button id="btn-add-stock" class="btn" style="background: var(--success);">➕ Añadir Stock</button>
-            </div>`;
-    }
-
     // Añadir la tabla respetando si ya inyectamos los toggles en "Componentes"
     if (nombrePestana === 'Componentes') {
         container.insertAdjacentHTML('beforeend', tableHtml);
     } else {
-        container.innerHTML = toolbarHtml + tableHtml;
+        container.innerHTML = tableHtml;
     }
 }
 
@@ -284,6 +271,150 @@ function formatearPrecioUnitarioLocal(n) {
 // mapeo que ETIQUETA_PROVEEDOR en pedido.js, duplicado aquí para no importar entre módulos solo
 // por esto (mismo criterio que ya se usa con formatearPrecioLocal/formatearPrecioUnitarioLocal).
 const ETIQUETA_PROVEEDOR_KIT = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME' };
+
+// NUEVO (2026-09-09): mismo escape básico de atributos HTML que usa pedido.js localmente --
+// duplicado aquí por el mismo criterio que el resto de helpers de este archivo (no importar entre
+// módulos solo por una función tan pequeña).
+function escaparAttrStock(texto) {
+    return String(texto == null ? '' : texto)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+// NUEVO: cantidades enteras se muestran sin decimales; si por lo que sea llega un decimal (algún
+// ajuste manual raro en Sheets) se muestra con coma, igual que el resto de la web.
+function formatearCantidadStock(n) {
+    if (!isFinite(n)) return '0';
+    if (Number.isInteger(n)) return String(n);
+    return (Math.round(n * 100) / 100).toString().replace('.', ',');
+}
+
+// --- NUEVO (2026-09-09): PESTAÑA STOCK FÍSICO ---
+// Render propio de Stock_Almacen (en vez del genérico): añade la columna calculada
+// "Stock_En_Camino" (creada sola en la hoja la primera vez que se usa "🚚 Añadir Stock en
+// Camino" -- hasta entonces se trata como 0), una columna "Stock Total" (almacén + en camino,
+// que es lo que ya cuenta para los cálculos de disponibilidad de toda la web) y un botón
+// "✅ Recibir" por fila cuando ese componente tiene algo en camino. Tras la tabla se añade la
+// sección "📦 Packs que podemos preparar" (ver renderPacksPreparables) con el simulador de
+// balanceo entre kits -- extra.preparables la trae ya calculada desde app.js.
+function renderStockAlmacen(container, datos, extra) {
+    let toolbarHtml = `
+        <div style="margin-bottom:12px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button id="btn-add-stock" class="btn" style="background: var(--success);">➕ Añadir Stock</button>
+            <button id="btn-add-stock-camino" class="btn" style="background: var(--primary);">🚚 Añadir Stock en Camino</button>
+        </div>`;
+
+    if (!datos || datos.length === 0) {
+        container.innerHTML = toolbarHtml + `<p style="text-align:center; color:var(--text-secondary);">No hay datos de Stock Físico para mostrar.</p>`;
+        return;
+    }
+
+    // Columnas que ya pintamos "a mano" con su propio cálculo -- cualquier otra columna que tenga
+    // la hoja (p.ej. si el usuario añade alguna a mano en Sheets) se añade igualmente al final,
+    // sin que haga falta tocar este código.
+    const COLUMNAS_FIJAS = ['ID_Componente', 'Uds_Disponibles', 'Stock_En_Camino', 'Stock_Minimo_Alerta'];
+    const otrasColumnas = Object.keys(datos[0]).filter(h => !COLUMNAS_FIJAS.includes(h));
+
+    let htmlHead = '<tr><th>ID_Componente</th><th>Uds_Disponibles</th><th>Stock en Camino</th><th>Stock Total (almacén + en camino)</th>';
+    otrasColumnas.forEach(h => { htmlHead += `<th>${h}</th>`; });
+    htmlHead += '<th>Acciones</th></tr>';
+
+    let htmlBody = '';
+    datos.forEach(fila => {
+        const idComp = fila['ID_Componente'] || '';
+        const disponible = parseFloat(String(fila['Uds_Disponibles'] || '0').replace(',', '.')) || 0;
+        const enCamino = parseFloat(String(fila['Stock_En_Camino'] || '0').replace(',', '.')) || 0;
+        const min = parseFloat(String(fila['Stock_Minimo_Alerta'] || '0').replace(',', '.')) || 0;
+        const total = disponible + enCamino;
+
+        // Misma lógica de alerta que había antes -- se basa en lo YA disponible físicamente en
+        // almacén (no en el total con lo que está en camino, que todavía no se puede usar).
+        let esAlerta = false;
+        if (disponible <= min && disponible > 0) esAlerta = true;
+        if (disponible === 0) esAlerta = 'critico';
+        const claseFila = esAlerta === 'critico' ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
+
+        let accionesHtml = '<span style="color:var(--text-secondary);">-</span>';
+        if (enCamino > 0) {
+            accionesHtml = `<button class="btn-small btn-recibir-stock" data-id="${escaparAttrStock(idComp)}" data-max="${enCamino}" style="background: var(--success);">✅ Recibir</button>`;
+        }
+
+        htmlBody += `<tr ${claseFila}>
+            <td title="${escaparAttrStock(idComp)}">${idComp}</td>
+            <td>${formatearCantidadStock(disponible)}</td>
+            <td>${enCamino > 0 ? formatearCantidadStock(enCamino) : '-'}</td>
+            <td style="font-weight:bold;">${formatearCantidadStock(total)}</td>`;
+        otrasColumnas.forEach(h => {
+            htmlBody += `<td title="${escaparAttrStock(fila[h] || '')}">${fila[h] || ''}</td>`;
+        });
+        htmlBody += `<td>${accionesHtml}</td></tr>`;
+    });
+
+    const tablaHtml = `<table><thead>${htmlHead}</thead><tbody>${htmlBody}</tbody></table>`;
+
+    let packsHtml = '';
+    if (extra && extra.preparables) {
+        packsHtml = renderPacksPreparables(extra.preparables);
+    }
+
+    container.innerHTML = toolbarHtml + tablaHtml + packsHtml;
+}
+
+// NUEVO (2026-09-09): sección "📦 Packs que podemos preparar" -- una fila por kit con cuántas
+// unidades completas se podrían montar ahora mismo (stock físico + en camino) y un input "Vas a
+// preparar" para simular repartir ese stock entre kits que comparten componentes (ver
+// calcularPreparablesPorKit en app.js -- este archivo solo pinta el resultado ya calculado).
+function renderPacksPreparables(preparablesExtra) {
+    const porKit = preparablesExtra.porKit || {};
+    const nombreConsolaPorKit = preparablesExtra.nombreConsolaPorKit || {};
+    const idsKits = Object.keys(porKit);
+    if (idsKits.length === 0) return '';
+
+    idsKits.sort((a, b) => {
+        const familiaA = nombreConsolaPorKit[a] || '';
+        const familiaB = nombreConsolaPorKit[b] || '';
+        const cmpFamilia = familiaA.localeCompare(familiaB, 'es', { sensitivity: 'base' });
+        if (cmpFamilia !== 0) return cmpFamilia;
+        return String(a).localeCompare(String(b), 'es', { sensitivity: 'base' });
+    });
+
+    let filasHtml = '';
+    idsKits.forEach(idKit => {
+        const info = porKit[idKit];
+        const consola = nombreConsolaPorKit[idKit] || '';
+        const claseFila = info.preparables <= 0 ? 'class="row-packs-agotado"' : '';
+        filasHtml += `<tr ${claseFila}>
+            <td>${idKit}</td>
+            <td>${consola}</td>
+            <td style="font-weight:bold;">${info.preparables}</td>
+            <td>${info.limitante ? escaparAttrStock(info.limitante) : '-'}</td>
+            <td><input type="number" class="packs-input-reserva" data-kit="${escaparAttrStock(idKit)}" min="0" step="1" value="${info.reserva || ''}" placeholder="0"></td>
+        </tr>`;
+    });
+
+    return `
+        <div class="packs-section">
+            <h3>📦 Packs que podemos preparar</h3>
+            <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Preparables ahora" son las unidades completas de ese kit que se podrían montar con el stock actual (almacén + en camino). Escribe en "Vas a preparar" cuántas vas a montar de un kit para simular repartir el stock entre kits que comparten componentes: verás cómo baja (o sube, si lo reduces) el número de los DEMÁS kits afectados. Es solo una simulación en esta pantalla -- no descuenta nada de verdad en Google Sheets.</p>
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead><tr>
+                        <th>Kit</th>
+                        <th>Consola</th>
+                        <th>Preparables ahora</th>
+                        <th>Componente limitante</th>
+                        <th>Vas a preparar</th>
+                    </tr></thead>
+                    <tbody>${filasHtml}</tbody>
+                </table>
+            </div>
+            <div style="margin-top:10px;">
+                <button id="btn-reset-reparto" class="btn" style="background: var(--danger);">↺ Reiniciar reparto</button>
+            </div>
+        </div>`;
+}
 
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---
 // NUEVO: 2º parámetro opcional "visibleHeaders" -- si se pasa, la tabla interna de cada kit

@@ -97,11 +97,14 @@ async function cargarDatosPedido() {
     // NUEVO: stock físico ya disponible por ID_Componente (mismo cálculo que verificarStock() en
     // pedidos.js -- se suman todas las filas de Stock_Almacen de un mismo ID_Componente, por si
     // hay stock repartido en varias entradas). Se usa para restar del pedido lo que ya se tiene.
+    // MODIFICADO (2026-09-09): también se suma "Stock_En_Camino" (pedido ya hecho, todavía sin
+    // llegar) -- a petición del usuario, cuenta igual que el stock físico para no pedir de más lo
+    // que ya está en camino.
     const stockPorId = {};
     datosStock.forEach(row => {
         const id = (row['ID_Componente'] || '').trim();
         if (!id) return;
-        stockPorId[id] = (stockPorId[id] || 0) + parseNumeroES(row['Uds_Disponibles']);
+        stockPorId[id] = (stockPorId[id] || 0) + parseNumeroES(row['Uds_Disponibles']) + parseNumeroES(row['Stock_En_Camino']);
     });
 
     // NUEVO: la hoja "Sustituciones" es opcional -- si todavía no está en config.js (SHEETS),
@@ -470,7 +473,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     contenedor.innerHTML = `
-        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen. "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>

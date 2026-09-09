@@ -256,6 +256,124 @@ function guardarStockManual(idComponente, cantidad) {
 }
 
 /**
+ * NUEVO (2026-09-09): localiza el índice (1-based, como espera Range) de una columna por
+ * cabecera en la pestaña Stock_Almacen, CREÁNDOLA si todavía no existe -- así no hace falta que
+ * el usuario añada la columna "Stock_En_Camino" a mano en Google Sheets, se crea sola la primera
+ * vez que se usa. Devuelve el índice 1-based y dentro del array `headers` (que se pasa por
+ * referencia y se actualiza in-place) para que el resto de la función que llame a esto no tenga
+ * que releer la hoja.
+ */
+function obtenerOCrearColumnaPorCabecera(sheet, headers, nombreColumna) {
+  let idx = headers.indexOf(nombreColumna);
+  if (idx !== -1) return idx; // 0-based dentro de `headers`, ya existía
+
+  const nuevaColIndex1based = headers.length + 1;
+  sheet.getRange(1, nuevaColIndex1based).setValue(nombreColumna);
+  headers.push(nombreColumna);
+  return headers.length - 1; // 0-based, recién añadida
+}
+
+/**
+ * NUEVO (2026-09-09): guarda una entrada de "Stock en camino" (pedido ya hecho a un proveedor
+ * pero que todavía no ha llegado físicamente) -- acción 'update_stock_en_camino', modal
+ * "🚚 Añadir Stock en Camino" en la pestaña Stock Físico. Mismo patrón que guardarStockManual
+ * (SUMA a lo que ya hubiera en camino, o crea la fila si el componente no tenía ninguna en
+ * Stock_Almacen todavía), pero escribe en la columna "Stock_En_Camino" en vez de
+ * "Uds_Disponibles" -- así ese material no cuenta como físicamente disponible para montar kits
+ * hasta que se confirme su llegada con recibirStockEnCamino(). La columna se crea sola la
+ * primera vez (ver obtenerOCrearColumnaPorCabecera) si la hoja todavía no la tiene.
+ */
+function guardarStockEnCamino(idComponente, cantidad) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Stock_Almacen");
+    if (!sheet) throw new Error("No se encuentra la pestaña 'Stock_Almacen'.");
+    if (!idComponente) throw new Error("ID de componente no válido.");
+
+    const cantidadNum = Number(cantidad);
+    if (isNaN(cantidadNum) || cantidadNum <= 0) throw new Error("La cantidad debe ser un número mayor que 0.");
+
+    const dataRange = sheet.getDataRange().getValues();
+    const headers = dataRange.shift().map(function(h) { return String(h).trim(); });
+    const idColIndex = headers.indexOf('ID_Componente');
+    if (idColIndex === -1) throw new Error("Falta la columna 'ID_Componente' en Stock_Almacen.");
+
+    const camColIndex = obtenerOCrearColumnaPorCabecera(sheet, headers, 'Stock_En_Camino');
+
+    for (let i = 0; i < dataRange.length; i++) {
+      if (String(dataRange[i][idColIndex]).trim() === String(idComponente).trim()) {
+        const actual = Number(dataRange[i][camColIndex]) || 0;
+        const nuevoValor = actual + cantidadNum;
+        sheet.getRange(i + 2, camColIndex + 1).setValue(nuevoValor);
+        return `Stock en camino actualizado: ${idComponente} ahora tiene ${nuevoValor} uds en camino (antes ${actual}, +${cantidadNum}).`;
+      }
+    }
+
+    // No existía ninguna fila de Stock_Almacen para este componente -- se crea una nueva, con
+    // Uds_Disponibles en 0 (nada físico todavía) y la cantidad indicada en Stock_En_Camino.
+    const filaNueva = new Array(headers.length).fill('');
+    filaNueva[idColIndex] = String(idComponente);
+    const udsColIndex = headers.indexOf('Uds_Disponibles');
+    if (udsColIndex !== -1) filaNueva[udsColIndex] = 0;
+    filaNueva[camColIndex] = cantidadNum;
+    sheet.getRange(sheet.getLastRow() + 1, 1, 1, filaNueva.length).setValues([filaNueva]);
+    return `Nueva fila de stock creada para ${idComponente}: ${cantidadNum} uds en camino.`;
+  } catch (err) {
+    throw new Error("Error al guardar stock en camino: " + err.message);
+  }
+}
+
+/**
+ * NUEVO (2026-09-09): traspasa unidades de "Stock_En_Camino" a "Uds_Disponibles" cuando llega el
+ * material -- acción 'recibir_stock_en_camino', botón "✅ Recibir" por fila en la pestaña Stock
+ * Físico. Traspaso PARCIAL editable (a petición expresa del usuario, por si llega solo parte de
+ * un pedido): se indica cuántas unidades han llegado realmente y solo esas se mueven; el resto
+ * se queda en "Stock_En_Camino" para recibirlo más adelante. Valida que no se reciban más
+ * unidades de las que había en camino (protege contra doble-clic / carreras y errores de
+ * escritura manual de la cantidad).
+ */
+function recibirStockEnCamino(idComponente, cantidad) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Stock_Almacen");
+    if (!sheet) throw new Error("No se encuentra la pestaña 'Stock_Almacen'.");
+    if (!idComponente) throw new Error("ID de componente no válido.");
+
+    const cantidadNum = Number(cantidad);
+    if (isNaN(cantidadNum) || cantidadNum <= 0) throw new Error("La cantidad recibida debe ser un número mayor que 0.");
+
+    const dataRange = sheet.getDataRange().getValues();
+    const headers = dataRange.shift().map(function(h) { return String(h).trim(); });
+    const idColIndex = headers.indexOf('ID_Componente');
+    const udsColIndex = headers.indexOf('Uds_Disponibles');
+    const camColIndex = headers.indexOf('Stock_En_Camino');
+    if (idColIndex === -1 || udsColIndex === -1) {
+      throw new Error("Faltan columnas 'ID_Componente' o 'Uds_Disponibles' en Stock_Almacen.");
+    }
+    if (camColIndex === -1) throw new Error(`${idComponente} no tiene ninguna unidad en camino registrada.`);
+
+    for (let i = 0; i < dataRange.length; i++) {
+      if (String(dataRange[i][idColIndex]).trim() === String(idComponente).trim()) {
+        const enCaminoActual = Number(dataRange[i][camColIndex]) || 0;
+        if (cantidadNum > enCaminoActual) {
+          throw new Error(`Solo hay ${enCaminoActual} uds en camino de ${idComponente}, no se pueden recibir ${cantidadNum}.`);
+        }
+        const disponibleActual = Number(dataRange[i][udsColIndex]) || 0;
+        const nuevoEnCamino = enCaminoActual - cantidadNum;
+        const nuevoDisponible = disponibleActual + cantidadNum;
+        sheet.getRange(i + 2, camColIndex + 1).setValue(nuevoEnCamino);
+        sheet.getRange(i + 2, udsColIndex + 1).setValue(nuevoDisponible);
+        return `Recibido: ${idComponente} +${cantidadNum} uds a almacén (ahora ${nuevoDisponible} disponibles, quedan ${nuevoEnCamino} en camino).`;
+      }
+    }
+
+    throw new Error(`${idComponente} no tiene ninguna fila en Stock_Almacen.`);
+  } catch (err) {
+    throw new Error("Error al recibir stock: " + err.message);
+  }
+}
+
+/**
  * NUEVO: wrapper fino para guardar en Variantes_TME, usado por doPost (acción
  * 'update_tme_manual', desde el modal de la web) -- guarda UN solo tramo.
  */
@@ -1811,6 +1929,22 @@ function doPost(e) {
     // indicada al stock existente de ese componente (o crea la fila si todavía no tenía ninguna).
     if (action === 'update_stock_manual') {
       const msg = guardarStockManual(payload.idComponente, payload.cantidad);
+      return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // NUEVO (2026-09-09): Acción para el modal "🚚 Añadir Stock en Camino" de la pestaña Stock
+    // Físico -- registra material ya pedido a un proveedor pero que todavía no ha llegado.
+    if (action === 'update_stock_en_camino') {
+      const msg = guardarStockEnCamino(payload.idComponente, payload.cantidad);
+      return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // NUEVO (2026-09-09): Acción para el botón "✅ Recibir" por fila de la pestaña Stock Físico --
+    // traspasa (parcial o totalmente) unidades de "Stock_En_Camino" a "Uds_Disponibles".
+    if (action === 'recibir_stock_en_camino') {
+      const msg = recibirStockEnCamino(payload.idComponente, payload.cantidad);
       return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
         .setMimeType(ContentService.MimeType.JSON);
     }

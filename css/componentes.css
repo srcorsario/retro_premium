@@ -319,6 +319,46 @@ td {
 }
 
 /* =========================================
+   NUEVO (2026-09-09): STOCK EN CAMINO / PACKS PREPARABLES (pestaña Stock Físico)
+   ========================================= */
+/* Botón pequeño de acción dentro de una celda de tabla (p.ej. "✅ Recibir") -- mismo look que
+   .btn pero más compacto para no deformar la fila. */
+.btn-small {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 12px;
+    white-space: nowrap;
+}
+.btn-small:hover { opacity: 0.8; }
+
+/* Sección "📦 Packs que podemos preparar" -- tabla aparte tras el stock físico. */
+.packs-section {
+    margin-top: 25px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+}
+.packs-section h3 {
+    margin-top: 0;
+    margin-bottom: 6px;
+}
+.packs-input-reserva {
+    width: 70px;
+    padding: 4px 6px;
+    background: var(--bg-color);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+/* Fila cuyo componente limitante ya está agotado (0 preparables ahora mismo, con lo que hay
+   reservado por otros kits) -- mismo tono de alerta que el resto de la web. */
+.row-packs-agotado { background-color: rgba(239, 68, 68, 0.2); color: #ef4444; }
+
+/* =========================================
    MENÚ DE PESTAÑAS PRINCIPAL
    ========================================= */
 .tabs {
