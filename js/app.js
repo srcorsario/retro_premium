@@ -323,11 +323,32 @@ function calcularStockPorGrupo(datosStock, sustitucionesMap) {
     return stockPorGrupo;
 }
 
+// NUEVO (revisión sustitutos, 2026-09-09): stock real por ID literal (SIN agrupar), tal cual
+// aparece en Stock_Almacen -- se usa solo para comprobar qué ID(s) tienen REALMENTE unidades
+// físicas registradas (almacén + en camino), antes de etiquetar algo como "el sustituto en
+// stock". El usuario detectó que estábamos mostrando el sustituto (p.ej. 025101.5MXL) SOLO
+// porque existía una fila para él en la hoja Sustituciones, sin comprobar que ese ID tuviera
+// ninguna unidad real en Stock_Almacen -- en ese caso concreto el stock físico seguía estando
+// registrado bajo el ID original (FUSE-PICO-1.5A-AXIAL), así que mostrar el sustituto era
+// engañoso. calcularStockPorGrupo() ya sumaba bien el stock total del grupo (contando cualquiera
+// de los dos IDs) -- este helper es nuevo, no cambia esos totales, solo decide QUÉ NOMBRE mostrar.
+function construirStockPorIdLiteral(datosStock) {
+    const stockPorId = {};
+    (datosStock || []).forEach(row => {
+        const id = (row['ID_Componente'] || '').trim();
+        if (!id) return;
+        const disponible = parseNumeroES(row['Uds_Disponibles']);
+        const enCamino = parseNumeroES(row['Stock_En_Camino']);
+        stockPorId[id] = (stockPorId[id] || 0) + disponible + enCamino;
+    });
+    return stockPorId;
+}
+
 // NUEVO: por cada kit, la lista de "huecos" (grupos de componente) que necesita y cuántas
 // unidades de cada uno. Si un kit tiene el componente Y su sustituto como filas separadas para el
 // mismo hueco (mismo grupo), nos quedamos con la cantidad mayor de las dos -- ambas representan
 // el mismo hueco físico, así que basta con tener stock combinado de cualquiera de los dos.
-function calcularRequisitosPorKit(datosKits, sustitucionesMap) {
+function calcularRequisitosPorKit(datosKits, sustitucionesMap, stockPorIdLiteral) {
     // MODIFICADO (2026-09-09, 5ª petición): Kits_Consolas sigue listando siempre el componente
     // "original" (descatalogado) para ese hueco -- por diseño, las sincronizaciones de Kits NUNCA
     // tocan Kits_Consolas al gestionar una sustitución (ver hoja Sustituciones). Pero el usuario
@@ -337,10 +358,16 @@ function calcularRequisitosPorKit(datosKits, sustitucionesMap) {
     // Se calcula aquí (una sola vez) el mapa inverso grupo -> [sustitutos] para que cada requisito
     // lleve consigo con qué ID(s) está realmente cubierto ese hueco físico -- ui.js lo usa para
     // mostrar el sustituto como nombre principal (ver etiquetaComponenteSustituto).
+    // MODIFICADO (revisión sustitutos): un ID solo entra en esta lista si tiene unidades reales
+    // (almacén + en camino) en Stock_Almacen -- si la hoja Sustituciones lo registra pero
+    // Stock_Almacen no tiene ni una unidad para él, no se cuenta como "el sustituto en stock" y se
+    // sigue mostrando el ID original (que es donde está el stock de verdad).
     const sustitutosPorGrupo = {};
     Object.entries(sustitucionesMap || {}).forEach(([idNuevo, idOriginal]) => {
-        if (!sustitutosPorGrupo[idOriginal]) sustitutosPorGrupo[idOriginal] = [];
-        sustitutosPorGrupo[idOriginal].push(idNuevo);
+        if ((stockPorIdLiteral || {})[idNuevo] > 0) {
+            if (!sustitutosPorGrupo[idOriginal]) sustitutosPorGrupo[idOriginal] = [];
+            sustitutosPorGrupo[idOriginal].push(idNuevo);
+        }
     });
 
     const porGrupo = {};
@@ -669,7 +696,8 @@ async function cargarVista(nombrePestana) {
             if (idNuevo && idOriginal) sustitucionesMap[idNuevo] = idOriginal;
         });
 
-        const requisitosPorKit = calcularRequisitosPorKit(datosKits, sustitucionesMap);
+        const stockPorIdLiteral = construirStockPorIdLiteral(datos);
+        const requisitosPorKit = calcularRequisitosPorKit(datosKits, sustitucionesMap, stockPorIdLiteral);
         const stockPorGrupo = calcularStockPorGrupo(datos, sustitucionesMap);
         const nombreConsolaPorKit = {};
         (datosKits || []).forEach(row => {
