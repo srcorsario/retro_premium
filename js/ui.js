@@ -390,14 +390,17 @@ function renderPacksPreparables(preparablesExtra) {
             <td>${consola}</td>
             <td style="font-weight:bold;">${info.preparables}</td>
             <td>${info.limitante ? escaparAttrStock(info.limitante) : '-'}</td>
-            <td><input type="number" class="packs-input-reserva" data-kit="${escaparAttrStock(idKit)}" min="0" step="1" value="${info.reserva || ''}" placeholder="0"></td>
+            <td>
+                <input type="number" class="packs-input-reserva" data-kit="${escaparAttrStock(idKit)}" min="0" step="1" value="${info.reserva || ''}" placeholder="0">
+                ${renderDetalleComponentesKit(info)}
+            </td>
         </tr>`;
     });
 
     return `
         <div class="packs-section">
             <h3>📦 Packs que podemos preparar</h3>
-            <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Preparables ahora" son las unidades completas de ese kit que se podrían montar con el stock actual (almacén + en camino). Escribe en "Vas a preparar" cuántas vas a montar de un kit para simular repartir el stock entre kits que comparten componentes: verás cómo baja (o sube, si lo reduces) el número de los DEMÁS kits afectados. Es solo una simulación en esta pantalla -- no descuenta nada de verdad en Google Sheets.</p>
+            <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Preparables ahora" son las unidades completas de ese kit que se podrían montar con el stock actual (almacén + en camino). Escribe en "Vas a preparar" cuántas vas a montar de un kit para simular repartir el stock entre kits que comparten componentes: debajo del campo verás cuántas unidades de cada componente consume esa cantidad y cuánto queda de cada uno (contando también lo reservado en otros kits), y verás cómo baja (o sube, si lo reduces) el número de PREPARABLES de los DEMÁS kits afectados. Es solo una simulación en esta pantalla -- no descuenta nada de verdad en Google Sheets.</p>
             <div style="overflow-x:auto;">
                 <table>
                     <thead><tr>
@@ -414,6 +417,24 @@ function renderPacksPreparables(preparablesExtra) {
                 <button id="btn-reset-reparto" class="btn" style="background: var(--danger);">↺ Reiniciar reparto</button>
             </div>
         </div>`;
+}
+
+// NUEVO (2026-09-09, 2ª petición): lista compacta bajo el input "Vas a preparar" con la cantidad
+// de CADA componente que consume la reserva actual de este kit ("cantidadUsada" = "Vas a
+// preparar" × cantidad por unidad de kit) y cuánto queda de ese componente en total (almacén + en
+// camino) después de restar TODAS las reservas actuales de cualquier kit -- así se ve en vivo, al
+// escribir, tanto lo que se está pidiendo como el efecto sobre el reparto compartido. Solo se
+// muestra si hay algo reservado (info.reserva > 0); con 0 no hay nada que desglosar.
+function renderDetalleComponentesKit(info) {
+    if (!info.reserva || info.reserva <= 0 || !info.detalle || info.detalle.length === 0) return '';
+
+    const filas = info.detalle.map(d => {
+        const agotado = d.quedanTrasReparto <= 0;
+        const color = agotado ? 'color:var(--danger); font-weight:bold;' : 'color:var(--text-secondary);';
+        return `<div style="${color}" title="Stock total de ${escaparAttrStock(d.idComp)}: ${formatearCantidadStock(d.stockTotal)}">${escaparAttrStock(d.idComp)}: ${formatearCantidadStock(d.cantidadUsada)} uds ${agotado ? '⚠️' : `(quedan ${formatearCantidadStock(d.quedanTrasReparto)})`}</div>`;
+    }).join('');
+
+    return `<div style="margin-top:4px; font-size:11px; line-height:1.5;">${filas}</div>`;
 }
 
 // --- LA FUNCIÓN QUE AGRUPA POR FAMILIA (ACORDEÓN) ---

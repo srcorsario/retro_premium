@@ -370,6 +370,11 @@ function calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservas) {
         const reservaEsteKit = reservas[idKit] || 0;
         let minPreparables = Infinity;
         let limitante = null;
+        // NUEVO (2026-09-09, 2ª petición): desglose por componente de ESTE kit con la reserva
+        // actual -- cuántas unidades consume ("Vas a preparar" × cantidad por kit) y cuánto queda
+        // del stock total de ese grupo de componente después de TODAS las reservas actuales (de
+        // cualquier kit, no solo este) -- para verlo actualizarse en vivo mientras se escribe.
+        const detalle = [];
         requisitos.forEach(r => {
             const stockTotal = stockPorGrupo[r.grupo] || 0;
             // Lo que otros kits (no este) ya han reservado de este mismo grupo de componente.
@@ -380,9 +385,17 @@ function calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservas) {
                 minPreparables = preparablesPorEsteComp;
                 limitante = r.idComp;
             }
+            const quedanTrasReparto = Math.max(0, stockTotal - (reservadoPorGrupoTotal[r.grupo] || 0));
+            detalle.push({
+                idComp: r.idComp,
+                cantidadPorUnidad: r.cantidad,
+                cantidadUsada: reservaEsteKit * r.cantidad,
+                stockTotal,
+                quedanTrasReparto
+            });
         });
         if (minPreparables === Infinity) minPreparables = 0;
-        resultado[idKit] = { preparables: minPreparables, limitante, reserva: reservaEsteKit };
+        resultado[idKit] = { preparables: minPreparables, limitante, reserva: reservaEsteKit, detalle };
     });
     return resultado;
 }
