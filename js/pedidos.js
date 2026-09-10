@@ -24,14 +24,11 @@ export async function inicializarModuloPedidos() {
     // engancha por delegación de eventos más abajo en vez de un addEventListener directo.
     const btnCancelStock = document.getElementById('btn-cancel-stock');
     const btnSubmitStock = document.getElementById('btn-submit-stock');
-    // NUEVO (2026-09-09): modal "🚚 Añadir Stock en Camino" y modal "✅ Recibir" (traspaso parcial)
-    // -- mismo patrón que el resto: botones que abren estos modales se inyectan dinámicamente en
-    // ui.js (#btn-add-stock-camino en la barra de herramientas, .btn-recibir-stock por fila), así
-    // que se enganchan por delegación de eventos más abajo.
+    // NUEVO (2026-09-09): modal "🚚 Añadir Stock en Camino" -- el botón que lo abre
+    // (#btn-add-stock-camino) se inyecta dinámicamente en ui.js, así que se engancha por
+    // delegación de eventos más abajo.
     const btnCancelStockCamino = document.getElementById('btn-cancel-stock-camino');
     const btnSubmitStockCamino = document.getElementById('btn-submit-stock-camino');
-    const btnCancelRecibir = document.getElementById('btn-cancel-recibir');
-    const btnSubmitRecibir = document.getElementById('btn-submit-recibir');
     // NUEVO (2026-09-10): modal "📦 Nuevo Pedido" -- mismo patrón, el botón que lo abre
     // (#btn-nuevo-pedido) se inyecta dinámicamente en ui.js junto a #btn-add-stock, así que se
     // engancha por delegación más abajo; el resto de controles sí son fijos (viven en el modal
@@ -47,7 +44,7 @@ export async function inicializarModuloPedidos() {
     const btnCancelAduana = document.getElementById('btn-cancel-aduana');
     const btnSubmitAduana = document.getElementById('btn-submit-aduana');
 
-    if (!select || !btnVerificar || !btnSyncTodo || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnCancelStock || !btnSubmitStock || !btnCancelStockCamino || !btnSubmitStockCamino || !btnCancelRecibir || !btnSubmitRecibir || !btnCancelPedido || !btnSubmitPedido || !btnAddLineaPedido || !selectProveedorPedido || !checkAduanaPedido || !btnCancelAduana || !btnSubmitAduana) return;
+    if (!select || !btnVerificar || !btnSyncTodo || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnCancelStock || !btnSubmitStock || !btnCancelStockCamino || !btnSubmitStockCamino || !btnCancelPedido || !btnSubmitPedido || !btnAddLineaPedido || !selectProveedorPedido || !checkAduanaPedido || !btnCancelAduana || !btnSubmitAduana) return;
 
     const datosKits = await obtenerDatos('Kits_Consolas');
     const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
@@ -72,8 +69,6 @@ export async function inicializarModuloPedidos() {
     btnSubmitStock.addEventListener('click', enviarDatosStock);
     btnCancelStockCamino.addEventListener('click', cerrarModalStockCamino);
     btnSubmitStockCamino.addEventListener('click', enviarDatosStockCamino);
-    btnCancelRecibir.addEventListener('click', cerrarModalRecibir);
-    btnSubmitRecibir.addEventListener('click', enviarDatosRecibir);
     // NUEVO (2026-09-10): modal "📦 Nuevo Pedido".
     btnCancelPedido.addEventListener('click', cerrarModalPedido);
     btnSubmitPedido.addEventListener('click', enviarDatosPedido);
@@ -90,7 +85,7 @@ export async function inicializarModuloPedidos() {
     btnCancelAduana.addEventListener('click', cerrarModalAduanaPedido);
     btnSubmitAduana.addEventListener('click', enviarAduanaPedido);
 
-    // NUEVO: #btn-add-stock (y ahora también #btn-add-stock-camino y .btn-recibir-stock) se
+    // NUEVO: #btn-add-stock (y ahora también #btn-add-stock-camino y #btn-aplicar-recibidos) se
     // regeneran cada vez que ui.js vuelve a pintar la pestaña Stock Físico (renderTabla reemplaza
     // el contenedor entero), así que un addEventListener normal se perdería en cuanto se cambiara
     // de pestaña y se volviera. Delegando el click en document (que sí es estable) los botones
@@ -104,12 +99,7 @@ export async function inicializarModuloPedidos() {
 
         if (e.target.closest('#btn-aplicar-aduana')) abrirModalAduanaPedido();
 
-        const btnRecibir = e.target.closest('.btn-recibir-stock');
-        if (btnRecibir) {
-            const idComp = btnRecibir.getAttribute('data-id');
-            const maxEnCamino = parseFloat(btnRecibir.getAttribute('data-max')) || 0;
-            abrirModalRecibir(idComp, maxEnCamino);
-        }
+        if (e.target.closest('#btn-aplicar-recibidos')) aplicarRecibidosLote();
     });
 
     pedidosInicializado = true;
@@ -454,65 +444,58 @@ async function enviarDatosStockCamino() {
     }
 }
 
-// --- NUEVO (2026-09-09): MÓDULO RECIBIR STOCK EN CAMINO (traspaso PARCIAL editable a
-// Uds_Disponibles -- ver recibirStockEnCamino en Codigo.gs). Se abre desde el botón "✅ Recibir"
-// de cada fila de la pestaña Stock Físico (ver .btn-recibir-stock en ui.js/pedidos.js), que ya
-// trae el ID de componente y el máximo que hay en camino (no se puede recibir más de eso). ---
-let recibirIdComponenteActual = null;
-let recibirMaxActual = 0;
-
-function abrirModalRecibir(idComponente, maxEnCamino) {
-    const modal = document.getElementById('modal-recibir');
-    const info = document.getElementById('recibir-info');
-    const input = document.getElementById('recibir-cantidad');
-    if (!modal || !info || !input) return;
-
-    recibirIdComponenteActual = idComponente;
-    recibirMaxActual = maxEnCamino;
-
-    info.textContent = `${idComponente}: hay ${maxEnCamino} uds en camino.`;
-    input.value = maxEnCamino; // por defecto, recibir todo -- editable si solo llegó parte del pedido
-    input.max = maxEnCamino;
-    modal.style.display = 'flex';
-}
-
-function cerrarModalRecibir() {
-    const modal = document.getElementById('modal-recibir');
-    if (modal) modal.style.display = 'none';
-    recibirIdComponenteActual = null;
-    recibirMaxActual = 0;
-}
-
-async function enviarDatosRecibir() {
-    const cantidad = parseFloat(document.getElementById('recibir-cantidad').value);
-    const idComp = recibirIdComponenteActual;
-
-    if (!idComp || !cantidad || cantidad <= 0) {
-        mostrarMensaje('msg-pedidos', '❌ Indica una cantidad recibida válida.', true);
-        return;
-    }
-    if (cantidad > recibirMaxActual) {
-        mostrarMensaje('msg-pedidos', `❌ Solo hay ${recibirMaxActual} uds en camino de ${idComp}, no se pueden recibir ${cantidad}.`, true);
+// --- MODIFICADO (2026-09-10): MÓDULO RECIBIR STOCK EN CAMINO -- antes era un modal por fila
+// (recibía UN componente, con confirm+reload cada vez -- muy lento si había que recibir varios
+// artículos seguidos, cada uno con su propia recarga completa de la web). Ahora es un checkbox +
+// cantidad editable POR FILA (ver renderStockAlmacen en ui.js, columna "Acciones") y un único
+// botón "✅ Aplicar Recibidos" que manda TODO lo marcado en una sola llamada (acción
+// 'recibir_stock_en_camino_lote', ver recibirStockEnCaminoLote en Codigo.gs) y solo recarga la web
+// una vez al final.
+async function aplicarRecibidosLote() {
+    const checkboxes = document.querySelectorAll('.chk-recibir-stock:checked');
+    if (checkboxes.length === 0) {
+        mostrarMensaje('msg-pedidos', '❌ Marca al menos un artículo (casilla junto a su cantidad) para recibir.', true);
         return;
     }
 
-    cerrarModalRecibir();
-    mostrarMensaje('msg-pedidos', '🔄 Traspasando a almacén en Google Sheets...', false);
+    const items = [];
+    const erroresValidacion = [];
+    checkboxes.forEach(chk => {
+        const idComp = chk.getAttribute('data-id');
+        const input = document.querySelector(`.input-recibir-cantidad[data-id="${CSS.escape(idComp)}"]`);
+        const cantidad = input ? parseFloat(input.value) : NaN;
+        const max = input ? parseFloat(input.getAttribute('max')) || 0 : 0;
+        if (isNaN(cantidad) || cantidad <= 0) {
+            erroresValidacion.push(`${idComp}: cantidad no válida.`);
+            return;
+        }
+        if (cantidad > max) {
+            erroresValidacion.push(`${idComp}: no puede recibir más de ${max}.`);
+            return;
+        }
+        items.push({ idComponente: idComp, cantidad });
+    });
+
+    if (erroresValidacion.length > 0) {
+        mostrarMensaje('msg-pedidos', `❌ Revisa: ${erroresValidacion.join(' | ')}`, true);
+        return;
+    }
+
+    mostrarMensaje('msg-pedidos', `🔄 Recibiendo ${items.length} artículo(s) en Google Sheets...`, false);
 
     const exito = await actualizarDatos({
-        action: 'recibir_stock_en_camino',
-        idComponente: idComp,
-        cantidad: cantidad
+        action: 'recibir_stock_en_camino_lote',
+        items
     });
 
     if (exito) {
-        if (confirm("✅ ¡Stock recibido y traspasado a almacén!\n\nPulsa Aceptar para refrescar la web y ver los cambios.")) {
+        if (confirm(`✅ ¡${items.length} artículo(s) recibido(s) y traspasado(s) a almacén!\n\nPulsa Aceptar para refrescar la web y ver los cambios.`)) {
             location.reload();
         } else {
-            mostrarMensaje('msg-pedidos', '✅ Stock recibido. Refresca la web cuando quieras.', false);
+            mostrarMensaje('msg-pedidos', `✅ ${items.length} artículo(s) recibido(s). Refresca la web cuando quieras.`, false);
         }
     } else {
-        mostrarMensaje('msg-pedidos', '❌ Error al procesar los datos en Google Sheets.', true);
+        mostrarMensaje('msg-pedidos', '❌ Error al recibir los artículos en Google Sheets.', true);
     }
 }
 
@@ -712,10 +695,36 @@ async function abrirModalAduanaPedido() {
     select.innerHTML = '<option value="">Cargando pedidos...</option>';
     modal.style.display = 'flex';
 
-    pedidosCacheAduana = await obtenerDatosViaAppsScript('Pedidos');
+    // NUEVO (2026-09-10): un pedido YA RECIBIDO del todo no tiene nada pendiente sobre lo que
+    // repartir la aduana (su cantidad ya salió de "en camino" y su coste quedó fijado en
+    // Precio_Real_Medio, que este modal no toca) -- así que se filtra la lista a solo los pedidos
+    // que tengan AL MENOS una línea cuyo componente siga con algo en "Stock_En_Camino" ahora
+    // mismo. Hace falta cruzar tres hojas: "Pedidos" (cabecera), "Pedidos_Detalle" (sus líneas,
+    // para saber qué componentes tocó) y "Stock_Almacen" (para ver si a ese componente le queda
+    // algo en camino).
+    const [todosPedidos, detallePedidos, stockActual] = await Promise.all([
+        obtenerDatosViaAppsScript('Pedidos'),
+        obtenerDatosViaAppsScript('Pedidos_Detalle'),
+        obtenerDatos('Stock_Almacen')
+    ]);
+
+    const enCaminoPorComponente = {};
+    stockActual.forEach(s => {
+        const idComp = s['ID_Componente'];
+        if (!idComp) return;
+        const enCamino = parseFloat(String(s['Stock_En_Camino'] || '0').replace(',', '.')) || 0;
+        enCaminoPorComponente[idComp] = (enCaminoPorComponente[idComp] || 0) + enCamino;
+    });
+
+    pedidosCacheAduana = todosPedidos.filter(p => {
+        const idPedido = p['ID_Pedido'];
+        if (!idPedido) return false;
+        const susLineas = detallePedidos.filter(d => d['ID_Pedido'] === idPedido);
+        return susLineas.some(l => (enCaminoPorComponente[l['ID_Componente']] || 0) > 0);
+    });
 
     if (pedidosCacheAduana.length === 0) {
-        select.innerHTML = '<option value="">-- No hay pedidos guardados todavía --</option>';
+        select.innerHTML = '<option value="">-- No hay pedidos con artículos aún en camino --</option>';
         input.value = '0';
         return;
     }

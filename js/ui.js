@@ -344,9 +344,17 @@ function renderStockAlmacen(container, datos, extra) {
         if (disponible === 0) esAlerta = 'critico';
         const claseFila = esAlerta === 'critico' ? 'class="row-danger"' : (esAlerta ? 'class="row-warning"' : '');
 
+        // MODIFICADO (2026-09-10): antes había un botón "✅ Recibir" que abría un modal por fila
+        // (con su propia recarga de la web al confirmar) -- muy lento si tocaba recibir varios
+        // artículos seguidos. Ahora es un checkbox + cantidad editable (por si llega solo parte)
+        // directamente en la fila; el botón único "✅ Aplicar Recibidos" de más abajo procesa TODO
+        // lo marcado en una sola llamada y una sola recarga (ver aplicarRecibidosLote en pedidos.js).
         let accionesHtml = '<span style="color:var(--text-secondary);">-</span>';
         if (enCamino > 0) {
-            accionesHtml = `<button class="btn-small btn-recibir-stock" data-id="${escaparAttrStock(idComp)}" data-max="${enCamino}" style="background: var(--success);">✅ Recibir</button>`;
+            accionesHtml = `<label style="display:flex; align-items:center; gap:6px; white-space:nowrap; cursor:pointer;">
+                <input type="checkbox" class="chk-recibir-stock" data-id="${escaparAttrStock(idComp)}">
+                <input type="number" class="input-recibir-cantidad" data-id="${escaparAttrStock(idComp)}" value="${enCamino}" min="0" max="${enCamino}" step="1" style="width:64px; padding:4px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--border-color); border-radius:4px;">
+            </label>`;
         }
 
         // NUEVO (2026-09-10): coste medio ponderado de lo YA disponible (por pedidos recibidos con
@@ -373,12 +381,26 @@ function renderStockAlmacen(container, datos, extra) {
 
     const tablaHtml = `<table><thead>${htmlHead}</thead><tbody>${htmlBody}</tbody></table>`;
 
+    // NUEVO (2026-09-10): botón único "✅ Aplicar Recibidos" -- solo aparece si hay algo en camino
+    // que recibir. Marca las casillas que quieras de la columna Acciones (ajustando la cantidad si
+    // llegó solo parte) y pulsa aquí para recibirlas todas de una vez, con una sola recarga al
+    // final en vez de una por artículo.
+    let aplicarRecibidosHtml = '';
+    const hayAlgoEnCamino = datos.some(f => (parseFloat(String(f['Stock_En_Camino'] || '0').replace(',', '.')) || 0) > 0);
+    if (hayAlgoEnCamino) {
+        aplicarRecibidosHtml = `
+        <div style="margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <button id="btn-aplicar-recibidos" class="btn" style="background: var(--success);">✅ Aplicar Recibidos</button>
+            <span style="font-size:12px; color:var(--text-secondary);">Marca las casillas de lo que ha llegado (ajusta la cantidad si es solo parte) y pulsa aquí para recibirlo todo de una vez.</span>
+        </div>`;
+    }
+
     let packsHtml = '';
     if (extra && extra.preparables) {
         packsHtml = renderPacksPreparables(extra.preparables);
     }
 
-    container.innerHTML = toolbarHtml + tablaHtml + packsHtml;
+    container.innerHTML = toolbarHtml + tablaHtml + aplicarRecibidosHtml + packsHtml;
 }
 
 // NUEVO (2026-09-09): sección "📦 Packs que podemos preparar" -- una fila por kit con cuántas

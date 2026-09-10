@@ -401,6 +401,101 @@ function recibirStockEnCamino(idComponente, cantidad) {
 }
 
 /**
+ * NUEVO (2026-09-10): versión EN LOTE de recibirStockEnCamino -- acción
+ * 'recibir_stock_en_camino_lote' desde el botón único "✅ Aplicar Recibidos" de la pestaña Stock
+ * Físico. Antes, recibir varios artículos seguidos significaba un modal + una llamada a Apps
+ * Script + una recarga COMPLETA de la web por cada uno (muy lento). Ahora se marcan varias
+ * casillas a la vez en la tabla y se manda todo junto: `items` = [{idComponente, cantidad}, ...].
+ *
+ * Lee y escribe Stock_Almacen UNA sola vez para todos los artículos (en vez de una lectura+
+ * escritura completa por artículo, que es lo que hacía recibirStockEnCamino llamada N veces). La
+ * lógica de cada artículo es idéntica a recibirStockEnCamino (mismo traspaso en_camino ->
+ * disponible y mismo traslado ponderado de Precio_Real_En_Camino a Precio_Real_Medio). Un artículo
+ * con error (componente no encontrado, cantidad inválida o mayor que lo disponible en camino) NO
+ * bloquea a los demás: se recogen los errores aparte y se informan junto al resumen de lo que sí
+ * se pudo recibir.
+ */
+function recibirStockEnCaminoLote(items) {
+  try {
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      throw new Error("No se ha indicado ningún artículo a recibir.");
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Stock_Almacen");
+    if (!sheet) throw new Error("No se encuentra la pestaña 'Stock_Almacen'.");
+
+    const dataRange = sheet.getDataRange().getValues();
+    const headers = dataRange.shift().map(function(h) { return String(h).trim(); });
+    const idColIndex = headers.indexOf('ID_Componente');
+    const udsColIndex = headers.indexOf('Uds_Disponibles');
+    const camColIndex = headers.indexOf('Stock_En_Camino');
+    const precioCaminoColIndex = headers.indexOf('Precio_Real_En_Camino');
+    const precioMedioColIndex = headers.indexOf('Precio_Real_Medio');
+    if (idColIndex === -1 || udsColIndex === -1) {
+      throw new Error("Faltan columnas 'ID_Componente' o 'Uds_Disponibles' en Stock_Almacen.");
+    }
+    if (camColIndex === -1) throw new Error("La hoja no tiene ninguna columna 'Stock_En_Camino' todavía.");
+
+    const recibidos = [];
+    const errores = [];
+
+    items.forEach(function(item) {
+      const idComponente = item && item.idComponente ? String(item.idComponente).trim() : '';
+      const cantidadNum = Number(item ? item.cantidad : NaN);
+      if (!idComponente) { errores.push("falta el ID de componente en una fila."); return; }
+      if (isNaN(cantidadNum) || cantidadNum <= 0) { errores.push(`${idComponente}: cantidad no válida.`); return; }
+
+      let filaEncontrada = -1;
+      for (let i = 0; i < dataRange.length; i++) {
+        if (String(dataRange[i][idColIndex]).trim() === idComponente) { filaEncontrada = i; break; }
+      }
+      if (filaEncontrada === -1) { errores.push(`${idComponente}: no tiene ninguna fila en Stock_Almacen.`); return; }
+
+      const enCaminoActual = Number(dataRange[filaEncontrada][camColIndex]) || 0;
+      if (cantidadNum > enCaminoActual) {
+        errores.push(`${idComponente}: solo hay ${enCaminoActual} uds en camino, no se pueden recibir ${cantidadNum}.`);
+        return;
+      }
+
+      const disponibleActual = Number(dataRange[filaEncontrada][udsColIndex]) || 0;
+      const nuevoEnCamino = enCaminoActual - cantidadNum;
+      const nuevoDisponible = disponibleActual + cantidadNum;
+      sheet.getRange(filaEncontrada + 2, camColIndex + 1).setValue(nuevoEnCamino);
+      sheet.getRange(filaEncontrada + 2, udsColIndex + 1).setValue(nuevoDisponible);
+      // Actualizado también en memoria por si dos entradas del mismo lote tocan el mismo
+      // componente (no debería pasar desde la UI, pero así el siguiente cálculo parte bien).
+      dataRange[filaEncontrada][camColIndex] = nuevoEnCamino;
+      dataRange[filaEncontrada][udsColIndex] = nuevoDisponible;
+
+      if (precioCaminoColIndex !== -1 && precioMedioColIndex !== -1) {
+        const precioCamino = Number(dataRange[filaEncontrada][precioCaminoColIndex]) || 0;
+        if (precioCamino > 0) {
+          const precioMedioActual = Number(dataRange[filaEncontrada][precioMedioColIndex]) || 0;
+          const nuevoPrecioMedio = (disponibleActual > 0 && precioMedioActual > 0)
+            ? redondear(((precioMedioActual * disponibleActual) + (precioCamino * cantidadNum)) / nuevoDisponible, 4)
+            : precioCamino;
+          sheet.getRange(filaEncontrada + 2, precioMedioColIndex + 1).setValue(nuevoPrecioMedio);
+          dataRange[filaEncontrada][precioMedioColIndex] = nuevoPrecioMedio;
+        }
+      }
+
+      recibidos.push(`${idComponente} +${cantidadNum}`);
+    });
+
+    if (recibidos.length === 0) {
+      throw new Error("No se ha recibido nada. " + errores.join(' | '));
+    }
+
+    let mensaje = `Recibidos ${recibidos.length} artículo(s): ${recibidos.join(', ')}.`;
+    if (errores.length > 0) mensaje += ` ⚠️ ${errores.length} con error: ${errores.join(' | ')}`;
+    return mensaje;
+  } catch (err) {
+    throw new Error("Error al recibir stock en lote: " + err.message);
+  }
+}
+
+/**
  * NUEVO (2026-09-10): redondeo genérico a N decimales devolviendo un Number (no un string), para
  * escribir valores limpios en las celdas de Sheets. Sigue la convención del proyecto: precios por
  * unidad a 4 decimales, importes totales a 2 decimales.
@@ -2312,6 +2407,14 @@ function doPost(e) {
     // traspasa (parcial o totalmente) unidades de "Stock_En_Camino" a "Uds_Disponibles".
     if (action === 'recibir_stock_en_camino') {
       const msg = recibirStockEnCamino(payload.idComponente, payload.cantidad);
+      return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // NUEVO (2026-09-10): Acción para el botón único "✅ Aplicar Recibidos" de la pestaña Stock
+    // Físico -- recibe VARIOS artículos marcados a la vez en una sola llamada.
+    if (action === 'recibir_stock_en_camino_lote') {
+      const msg = recibirStockEnCaminoLote(payload.items);
       return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
         .setMimeType(ContentService.MimeType.JSON);
     }

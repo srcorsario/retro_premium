@@ -173,23 +173,10 @@
         </div>
     </div>
 
-    <!-- NUEVO (2026-09-09): MODAL RECIBIR STOCK EN CAMINO -- traspaso PARCIAL editable a
-         Uds_Disponibles (por si llega solo parte de un pedido) -->
-    <div id="modal-recibir" class="modal-overlay" style="display: none;">
-        <div class="modal-content">
-            <h3>✅ Recibir Stock</h3>
-            <p id="recibir-info" style="font-size:13px; color:var(--text-secondary); margin-top:0;"></p>
-            <div style="margin-bottom: 5px;">
-                <label for="recibir-cantidad" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Unidades que han llegado realmente:</label>
-                <input type="number" id="recibir-cantidad" min="1" step="1" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
-            </div>
-            <p style="font-size:12px; color:var(--text-secondary); margin-top:5px;">Por defecto se recibe todo lo que había en camino -- cámbialo si solo ha llegado una parte del pedido (el resto se queda "en camino" para recibirlo más adelante).</p>
-            <div class="modal-actions">
-                <button id="btn-cancel-recibir" class="btn" style="background: var(--danger);">Cancelar</button>
-                <button id="btn-submit-recibir" class="btn" style="background: var(--success);">Confirmar Recepción</button>
-            </div>
-        </div>
-    </div>
+    <!-- MODIFICADO (2026-09-10): el modal "✅ Recibir Stock" (uno por fila, con recarga tras cada
+         uno) se sustituyó por checkboxes + cantidad editable directamente en la tabla de Stock
+         Físico y un único botón "✅ Aplicar Recibidos" -- ver renderStockAlmacen en ui.js y
+         aplicarRecibidosLote en pedidos.js. Ya no hace falta este modal. -->
 
     <!-- NUEVO (2026-09-10): MODAL NUEVO PEDIDO (pestaña Stock Físico) -- registra un pedido
          completo (proveedor + gastos de envío/aduana + líneas de artículos) para calcular el
