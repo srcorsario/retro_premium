@@ -304,6 +304,7 @@ function renderStockAlmacen(container, datos, extra) {
         <div style="margin-bottom:12px; display:flex; gap:10px; flex-wrap:wrap;">
             <button id="btn-add-stock" class="btn" style="background: var(--success);">➕ Añadir Stock</button>
             <button id="btn-add-stock-camino" class="btn" style="background: var(--primary);">🚚 Añadir Stock en Camino</button>
+            <button id="btn-nuevo-pedido" class="btn" style="background: var(--tme-color);">📦 Nuevo Pedido</button>
         </div>`;
 
     if (!datos || datos.length === 0) {
@@ -314,10 +315,14 @@ function renderStockAlmacen(container, datos, extra) {
     // Columnas que ya pintamos "a mano" con su propio cálculo -- cualquier otra columna que tenga
     // la hoja (p.ej. si el usuario añade alguna a mano en Sheets) se añade igualmente al final,
     // sin que haga falta tocar este código.
-    const COLUMNAS_FIJAS = ['ID_Componente', 'Uds_Disponibles', 'Stock_En_Camino', 'Stock_Minimo_Alerta'];
+    // NUEVO (2026-09-10): "Precio_Real_Medio" y "Ultimo_ID_Pedido" (creadas solas en Stock_Almacen
+    // al guardar el primer pedido desde "📦 Nuevo Pedido", ver guardarPedidoCompleto en Codigo.gs)
+    // también se pintan aquí "a mano" con su propio formato, en vez de dejarlas caer en el bucle
+    // genérico de "otrasColumnas" de más abajo.
+    const COLUMNAS_FIJAS = ['ID_Componente', 'Uds_Disponibles', 'Stock_En_Camino', 'Stock_Minimo_Alerta', 'Precio_Real_Medio', 'Ultimo_ID_Pedido'];
     const otrasColumnas = Object.keys(datos[0]).filter(h => !COLUMNAS_FIJAS.includes(h));
 
-    let htmlHead = '<tr><th>ID_Componente</th><th>Uds_Disponibles</th><th>Stock en Camino</th><th>Stock Total (almacén + en camino)</th>';
+    let htmlHead = '<tr><th>ID_Componente</th><th>Uds_Disponibles</th><th>Stock en Camino</th><th>Stock Total (almacén + en camino)</th><th>Precio Real (medio)</th><th>Último Pedido</th>';
     otrasColumnas.forEach(h => { htmlHead += `<th>${h}</th>`; });
     htmlHead += '<th>Acciones</th></tr>';
 
@@ -341,11 +346,19 @@ function renderStockAlmacen(container, datos, extra) {
             accionesHtml = `<button class="btn-small btn-recibir-stock" data-id="${escaparAttrStock(idComp)}" data-max="${enCamino}" style="background: var(--success);">✅ Recibir</button>`;
         }
 
+        // NUEVO (2026-09-10): coste medio ponderado (por pedidos guardados con "📦 Nuevo Pedido")
+        // y referencia del último pedido que lo actualizó -- ambos vacíos hasta que se registre el
+        // primer pedido de ese componente.
+        const precioMedio = parseFloat(String(fila['Precio_Real_Medio'] || '').replace(',', '.')) || 0;
+        const ultimoPedido = fila['Ultimo_ID_Pedido'] || '';
+
         htmlBody += `<tr ${claseFila}>
             <td title="${escaparAttrStock(idComp)}">${idComp}</td>
             <td>${formatearCantidadStock(disponible)}</td>
             <td>${enCamino > 0 ? formatearCantidadStock(enCamino) : '-'}</td>
-            <td style="font-weight:bold;">${formatearCantidadStock(total)}</td>`;
+            <td style="font-weight:bold;">${formatearCantidadStock(total)}</td>
+            <td>${precioMedio > 0 ? formatearPrecioUnitarioLocal(precioMedio) + ' €' : '-'}</td>
+            <td title="${escaparAttrStock(ultimoPedido)}">${ultimoPedido || '-'}</td>`;
         otrasColumnas.forEach(h => {
             htmlBody += `<td title="${escaparAttrStock(fila[h] || '')}">${fila[h] || ''}</td>`;
         });

@@ -191,6 +191,67 @@
         </div>
     </div>
 
+    <!-- NUEVO (2026-09-10): MODAL NUEVO PEDIDO (pestaña Stock Físico) -- registra un pedido
+         completo (proveedor + gastos de envío/aduana + líneas de artículos) para calcular el
+         precio real por unidad ya repartido el gasto extra, y sumarlo como stock físico con su
+         coste medio ponderado (ver guardarPedidoCompleto en Codigo.gs) -->
+    <div id="modal-pedido" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 620px;">
+            <h3>📦 Nuevo Pedido</h3>
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <div style="flex: 1;">
+                    <label for="pedido-proveedor" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Proveedor:</label>
+                    <select id="pedido-proveedor" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                        <option value="LCSC">LCSC</option>
+                        <option value="ALIEXPRESS">AliExpress</option>
+                        <option value="TME">TME</option>
+                        <option value="OTRO">Otro...</option>
+                    </select>
+                </div>
+                <div style="flex: 1;">
+                    <label for="pedido-proveedor-otro" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Nombre proveedor:</label>
+                    <input type="text" id="pedido-proveedor-otro" placeholder="p.ej. Amazon" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; display:none;">
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <div style="flex: 1;">
+                    <label for="pedido-fecha" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Fecha:</label>
+                    <input type="date" id="pedido-fecha" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                </div>
+                <div style="flex: 1;">
+                    <label for="pedido-gastos-envio" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Gastos de envío (€):</label>
+                    <input type="number" id="pedido-gastos-envio" step="0.01" min="0" value="0" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                </div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary); cursor:pointer;">
+                    <input type="checkbox" id="pedido-aplica-aduana"> Aplicar gasto de aduanas a este pedido
+                </label>
+                <div id="pedido-aduana-wrap" style="display:none; margin-top:8px;">
+                    <label for="pedido-gastos-aduana" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Gastos de aduana (€):</label>
+                    <input type="number" id="pedido-gastos-aduana" step="0.01" min="0" value="0" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                </div>
+            </div>
+
+            <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-bottom: 10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <strong style="font-size:13px;">Artículos del pedido</strong>
+                    <button type="button" id="btn-add-linea-pedido" class="btn-small" style="background: var(--primary);">+ Añadir línea</button>
+                </div>
+                <div id="pedido-lineas-container" style="display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto;"></div>
+            </div>
+
+            <p style="font-size:12px; color:var(--text-secondary); margin-top:5px;">El precio unitario que pongas por artículo es el que factura el proveedor (sin envío/aduana). El gasto extra del pedido se reparte proporcionalmente al valor de cada línea, y el resultado se suma al stock físico de cada componente con su coste medio ponderado.</p>
+
+            <div id="msg-pedido-modal" style="font-size:13px; margin-top:10px;"></div>
+
+            <div class="modal-actions">
+                <button id="btn-cancel-pedido" class="btn" style="background: var(--danger);">Cancelar</button>
+                <button id="btn-submit-pedido" class="btn" style="background: var(--success);">Guardar Pedido</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="js/app.js"></script>
 </body>
 </html>

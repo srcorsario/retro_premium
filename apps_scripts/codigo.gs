@@ -374,6 +374,168 @@ function recibirStockEnCamino(idComponente, cantidad) {
 }
 
 /**
+ * NUEVO (2026-09-10): redondeo genérico a N decimales devolviendo un Number (no un string), para
+ * escribir valores limpios en las celdas de Sheets. Sigue la convención del proyecto: precios por
+ * unidad a 4 decimales, importes totales a 2 decimales.
+ */
+function redondear(numero, decimales) {
+  const factor = Math.pow(10, decimales);
+  return Math.round((Number(numero) + Number.EPSILON) * factor) / factor;
+}
+
+/**
+ * NUEVO (2026-09-10): devuelve la pestaña `nombre`, creándola con la fila de cabeceras `headers`
+ * si todavía no existe -- así "Pedidos" y "Pedidos_Detalle" (ver guardarPedidoCompleto) se crean
+ * solas la primera vez que se guarda un pedido desde la web, sin que el usuario tenga que crearlas
+ * a mano en Google Sheets primero.
+ */
+function obtenerOCrearHoja(ss, nombre, headers) {
+  let hoja = ss.getSheetByName(nombre);
+  if (!hoja) {
+    hoja = ss.insertSheet(nombre);
+    hoja.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  return hoja;
+}
+
+/**
+ * NUEVO (2026-09-10): genera el ID_Pedido correlativo por proveedor (p.ej. "LCSC nº1",
+ * "LCSC nº2", "ALIEXPRESS nº1") contando cuántos pedidos ya existen en la hoja "Pedidos" para ese
+ * mismo proveedor (comparación insensible a mayúsculas/espacios).
+ */
+function generarIdPedido(hojaPedidos, proveedor) {
+  const dataRange = hojaPedidos.getDataRange().getValues();
+  const headers = dataRange.shift().map(function(h) { return String(h).trim(); });
+  const provColIndex = headers.indexOf('Proveedor');
+  let contador = 0;
+  if (provColIndex !== -1) {
+    dataRange.forEach(function(fila) {
+      if (String(fila[provColIndex]).trim().toUpperCase() === proveedor.toUpperCase()) contador++;
+    });
+  }
+  return `${proveedor.toUpperCase()} nº${contador + 1}`;
+}
+
+/**
+ * NUEVO (2026-09-10): guarda un pedido completo desde el formulario "📦 Nuevo Pedido" de la
+ * pestaña Stock Físico -- acción 'guardar_pedido_completo'. `datos` = { proveedor, fecha,
+ * gastosEnvio, aplicaAduana, gastosAduana, lineas: [{idComponente, cantidad, precioUnitario}, ...] }.
+ *
+ * Reparte el gasto extra (envío + aduana, si aplicaAduana) entre las líneas del pedido
+ * PROPORCIONALMENTE AL VALOR de cada línea (cantidad × precioUnitario) sobre el valor total del
+ * pedido -- mismo criterio que ya usa el simulador de kits para prorratear envío/aduanas. Con eso
+ * calcula Precio_Unitario_Real = Precio_Unitario_Producto × (1 + gastoExtraTotal/valorArticulos).
+ *
+ * Registra una fila en "Pedidos" (cabecera), una fila por línea en "Pedidos_Detalle", y actualiza
+ * Stock_Almacen: suma la cantidad a Uds_Disponibles y recalcula un COSTE MEDIO PONDERADO en la
+ * columna "Precio_Real_Medio" (se crea sola la primera vez, igual que Stock_En_Camino) -- si el
+ * componente ya tenía unidades con un precio medio previo, el nuevo medio pondera ambos lotes por
+ * cantidad; si no, el medio pasa a ser directamente el de este pedido. También deja constancia del
+ * último pedido de origen en la columna "Ultimo_ID_Pedido" (se crea igual). NOTA: al ser un coste
+ * MEDIO por componente (no por lote), esta columna no distingue qué unidades físicas concretas
+ * vinieron de qué pedido si llegan de proveedores distintos -- solo el último pedido que tocó ese
+ * componente queda registrado; el desglose exacto por pedido siempre queda consultable en
+ * "Pedidos_Detalle".
+ */
+function guardarPedidoCompleto(datos) {
+  try {
+    if (!datos || !datos.proveedor) throw new Error("Falta el proveedor del pedido.");
+    if (!datos.lineas || !Array.isArray(datos.lineas) || datos.lineas.length === 0) {
+      throw new Error("El pedido no tiene ninguna línea de artículos.");
+    }
+    datos.lineas.forEach(function(l, i) {
+      if (!l.idComponente) throw new Error(`Línea ${i + 1}: falta el componente.`);
+      if (!(Number(l.cantidad) > 0)) throw new Error(`Línea ${i + 1} (${l.idComponente}): cantidad no válida.`);
+      if (!(Number(l.precioUnitario) > 0)) throw new Error(`Línea ${i + 1} (${l.idComponente}): precio unitario no válido.`);
+    });
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const hojaPedidos = obtenerOCrearHoja(ss, 'Pedidos',
+      ['ID_Pedido', 'Proveedor', 'Fecha', 'Gastos_Envio', 'Aplica_Aduana', 'Gastos_Aduana', 'Valor_Articulos', 'Gasto_Extra_Total']);
+    const hojaDetalle = obtenerOCrearHoja(ss, 'Pedidos_Detalle',
+      ['ID_Pedido', 'ID_Componente', 'Cantidad', 'Precio_Unitario_Producto', 'Precio_Unitario_Real']);
+
+    const proveedor = String(datos.proveedor).trim();
+    const idPedido = generarIdPedido(hojaPedidos, proveedor);
+    const fecha = datos.fecha ? new Date(datos.fecha) : new Date();
+    const gastosEnvio = Number(datos.gastosEnvio) || 0;
+    const aplicaAduana = !!datos.aplicaAduana;
+    const gastosAduana = aplicaAduana ? (Number(datos.gastosAduana) || 0) : 0;
+
+    const valorArticulos = datos.lineas.reduce(function(acc, l) {
+      return acc + (Number(l.cantidad) * Number(l.precioUnitario));
+    }, 0);
+    const gastoExtraTotal = gastosEnvio + gastosAduana;
+    const factorReparto = valorArticulos > 0 ? (gastoExtraTotal / valorArticulos) : 0;
+
+    hojaPedidos.getRange(hojaPedidos.getLastRow() + 1, 1, 1, 8).setValues([[
+      idPedido, proveedor, fecha, redondear(gastosEnvio, 2), aplicaAduana, redondear(gastosAduana, 2),
+      redondear(valorArticulos, 2), redondear(gastoExtraTotal, 2)
+    ]]);
+
+    // Se lee Stock_Almacen UNA sola vez para todas las líneas del pedido (evita releer toda la
+    // hoja por cada artículo).
+    const stockSheet = ss.getSheetByName('Stock_Almacen');
+    if (!stockSheet) throw new Error("No se encuentra la pestaña 'Stock_Almacen'.");
+    const stockData = stockSheet.getDataRange().getValues();
+    const stockHeaders = stockData.shift().map(function(h) { return String(h).trim(); });
+    const idColIndex = stockHeaders.indexOf('ID_Componente');
+    const udsColIndex = stockHeaders.indexOf('Uds_Disponibles');
+    if (idColIndex === -1 || udsColIndex === -1) {
+      throw new Error("Faltan columnas 'ID_Componente' o 'Uds_Disponibles' en Stock_Almacen.");
+    }
+    const precioColIndex = obtenerOCrearColumnaPorCabecera(stockSheet, stockHeaders, 'Precio_Real_Medio');
+    const origenColIndex = obtenerOCrearColumnaPorCabecera(stockSheet, stockHeaders, 'Ultimo_ID_Pedido');
+
+    const filasDetalle = [];
+    datos.lineas.forEach(function(l) {
+      const idComponente = String(l.idComponente).trim();
+      const cantidad = Number(l.cantidad);
+      const precioProducto = Number(l.precioUnitario);
+      const precioReal = redondear(precioProducto * (1 + factorReparto), 4);
+
+      filasDetalle.push([idPedido, idComponente, cantidad, redondear(precioProducto, 4), precioReal]);
+
+      let filaEncontrada = -1;
+      for (let i = 0; i < stockData.length; i++) {
+        if (String(stockData[i][idColIndex]).trim() === idComponente) { filaEncontrada = i; break; }
+      }
+
+      if (filaEncontrada !== -1) {
+        const udsActual = Number(stockData[filaEncontrada][udsColIndex]) || 0;
+        const precioActual = Number(stockData[filaEncontrada][precioColIndex]) || 0;
+        const nuevoUds = udsActual + cantidad;
+        const nuevoPrecioMedio = (udsActual > 0 && precioActual > 0)
+          ? redondear(((precioActual * udsActual) + (precioReal * cantidad)) / nuevoUds, 4)
+          : precioReal;
+
+        stockSheet.getRange(filaEncontrada + 2, udsColIndex + 1).setValue(nuevoUds);
+        stockSheet.getRange(filaEncontrada + 2, precioColIndex + 1).setValue(nuevoPrecioMedio);
+        stockSheet.getRange(filaEncontrada + 2, origenColIndex + 1).setValue(idPedido);
+        // Se actualiza también en memoria por si otra línea del MISMO pedido repite este
+        // componente (no debería pasar, pero así el siguiente cálculo parte del valor correcto).
+        stockData[filaEncontrada][udsColIndex] = nuevoUds;
+        stockData[filaEncontrada][precioColIndex] = nuevoPrecioMedio;
+      } else {
+        const filaNueva = new Array(stockHeaders.length).fill('');
+        filaNueva[idColIndex] = idComponente;
+        filaNueva[udsColIndex] = cantidad;
+        filaNueva[precioColIndex] = precioReal;
+        filaNueva[origenColIndex] = idPedido;
+        stockSheet.getRange(stockSheet.getLastRow() + 1, 1, 1, filaNueva.length).setValues([filaNueva]);
+        stockData.push(filaNueva);
+      }
+    });
+
+    hojaDetalle.getRange(hojaDetalle.getLastRow() + 1, 1, filasDetalle.length, 5).setValues(filasDetalle);
+
+    return `Pedido ${idPedido} guardado: ${datos.lineas.length} artículo(s), valor ${redondear(valorArticulos, 2)}€ + ${redondear(gastoExtraTotal, 2)}€ de gasto extra repartido.`;
+  } catch (err) {
+    throw new Error("Error al guardar el pedido: " + err.message);
+  }
+}
+
+/**
  * NUEVO: wrapper fino para guardar en Variantes_TME, usado por doPost (acción
  * 'update_tme_manual', desde el modal de la web) -- guarda UN solo tramo.
  */
@@ -1945,6 +2107,14 @@ function doPost(e) {
     // traspasa (parcial o totalmente) unidades de "Stock_En_Camino" a "Uds_Disponibles".
     if (action === 'recibir_stock_en_camino') {
       const msg = recibirStockEnCamino(payload.idComponente, payload.cantidad);
+      return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // NUEVO (2026-09-10): Acción para el formulario "📦 Nuevo Pedido" de la pestaña Stock Físico --
+    // registra el pedido (cabecera + líneas) y actualiza el coste medio ponderado de Stock_Almacen.
+    if (action === 'guardar_pedido_completo') {
+      const msg = guardarPedidoCompleto(payload.pedido);
       return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
         .setMimeType(ContentService.MimeType.JSON);
     }
