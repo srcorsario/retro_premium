@@ -331,6 +331,17 @@ function guardarStockEnCamino(idComponente, cantidad) {
  * se queda en "Stock_En_Camino" para recibirlo más adelante. Valida que no se reciban más
  * unidades de las que había en camino (protege contra doble-clic / carreras y errores de
  * escritura manual de la cantidad).
+ *
+ * MODIFICADO (2026-09-10): si ese "en camino" viene de un pedido guardado con "📦 Nuevo Pedido"
+ * (ver guardarPedidoCompleto), tiene su propio coste medio ponderado en "Precio_Real_En_Camino".
+ * Al recibir, ese precio se mezcla (ponderado por cantidad) en "Precio_Real_Medio" -- que pasa a
+ * representar el coste real de lo YA disponible físicamente, no de lo que solo está pedido. Si no
+ * hay ningún precio en camino registrado (stock en camino añadido a mano con "🚚 Añadir Stock en
+ * Camino", sin pasar por un pedido), simplemente no hay nada que mezclar y "Precio_Real_Medio" se
+ * deja como estaba -- recibir sigue funcionando igual, solo que sin dato de coste real.
+ * "Precio_Real_En_Camino" en sí NO cambia con una recepción parcial: al ser ya un precio MEDIO
+ * por unidad de todo lo pendiente, las unidades que quedan en camino siguen valiendo ese mismo
+ * medio (razonamiento igual al de un coste medio móvil).
  */
 function recibirStockEnCamino(idComponente, cantidad) {
   try {
@@ -347,6 +358,8 @@ function recibirStockEnCamino(idComponente, cantidad) {
     const idColIndex = headers.indexOf('ID_Componente');
     const udsColIndex = headers.indexOf('Uds_Disponibles');
     const camColIndex = headers.indexOf('Stock_En_Camino');
+    const precioCaminoColIndex = headers.indexOf('Precio_Real_En_Camino');
+    const precioMedioColIndex = headers.indexOf('Precio_Real_Medio');
     if (idColIndex === -1 || udsColIndex === -1) {
       throw new Error("Faltan columnas 'ID_Componente' o 'Uds_Disponibles' en Stock_Almacen.");
     }
@@ -363,7 +376,21 @@ function recibirStockEnCamino(idComponente, cantidad) {
         const nuevoDisponible = disponibleActual + cantidadNum;
         sheet.getRange(i + 2, camColIndex + 1).setValue(nuevoEnCamino);
         sheet.getRange(i + 2, udsColIndex + 1).setValue(nuevoDisponible);
-        return `Recibido: ${idComponente} +${cantidadNum} uds a almacén (ahora ${nuevoDisponible} disponibles, quedan ${nuevoEnCamino} en camino).`;
+
+        let notaPrecio = '';
+        if (precioCaminoColIndex !== -1 && precioMedioColIndex !== -1) {
+          const precioCamino = Number(dataRange[i][precioCaminoColIndex]) || 0;
+          if (precioCamino > 0) {
+            const precioMedioActual = Number(dataRange[i][precioMedioColIndex]) || 0;
+            const nuevoPrecioMedio = (disponibleActual > 0 && precioMedioActual > 0)
+              ? redondear(((precioMedioActual * disponibleActual) + (precioCamino * cantidadNum)) / nuevoDisponible, 4)
+              : precioCamino;
+            sheet.getRange(i + 2, precioMedioColIndex + 1).setValue(nuevoPrecioMedio);
+            notaPrecio = ` (precio real medio actualizado a ${nuevoPrecioMedio}€/ud)`;
+          }
+        }
+
+        return `Recibido: ${idComponente} +${cantidadNum} uds a almacén (ahora ${nuevoDisponible} disponibles, quedan ${nuevoEnCamino} en camino)${notaPrecio}.`;
       }
     }
 
@@ -430,16 +457,20 @@ function generarIdPedido(hojaPedidos, proveedor) {
  * manipulación (y el descuento) se aplican siempre, no dependen de aplicaAduana -- ese flag solo
  * controla si se suma también Gastos_Aduana.
  *
- * Registra una fila en "Pedidos" (cabecera), una fila por línea en "Pedidos_Detalle", y actualiza
- * Stock_Almacen: suma la cantidad a Uds_Disponibles y recalcula un COSTE MEDIO PONDERADO en la
- * columna "Precio_Real_Medio" (se crea sola la primera vez, igual que Stock_En_Camino) -- si el
- * componente ya tenía unidades con un precio medio previo, el nuevo medio pondera ambos lotes por
- * cantidad; si no, el medio pasa a ser directamente el de este pedido. También deja constancia del
- * último pedido de origen en la columna "Ultimo_ID_Pedido" (se crea igual). NOTA: al ser un coste
- * MEDIO por componente (no por lote), esta columna no distingue qué unidades físicas concretas
- * vinieron de qué pedido si llegan de proveedores distintos -- solo el último pedido que tocó ese
- * componente queda registrado; el desglose exacto por pedido siempre queda consultable en
- * "Pedidos_Detalle".
+ * Registra una fila en "Pedidos" (cabecera) y una fila por línea en "Pedidos_Detalle". IMPORTANTE
+ * (corregido 2026-09-10): un pedido recién guardado TODAVÍA NO HA LLEGADO, así que la cantidad se
+ * suma a "Stock_En_Camino" (no a "Uds_Disponibles") con su propio coste medio ponderado en
+ * "Precio_Real_En_Camino" -- si el componente ya tenía algo en camino con un precio medio previo,
+ * el nuevo medio pondera ambos por cantidad; si no, pasa a ser directamente el de este pedido.
+ * Ese precio NO se mezcla todavía en el coste real de lo disponible: solo cuando se confirme la
+ * llegada con el botón "✅ Recibir" (ver recibirStockEnCamino) se traslada, ponderado, a
+ * "Precio_Real_Medio" -- así no se cuenta como coste real confirmado algo que aún puede no llegar,
+ * o llegar solo en parte. También deja constancia del último pedido de origen en la columna
+ * "Ultimo_ID_Pedido" (ambas columnas se crean solas la primera vez, igual que ya hacía
+ * Stock_En_Camino). NOTA: al ser un coste MEDIO por componente (no por lote), no distingue qué
+ * unidades físicas concretas vinieron de qué pedido si llegan de proveedores distintos -- solo el
+ * último pedido que tocó ese componente queda registrado; el desglose exacto por pedido siempre
+ * queda consultable en "Pedidos_Detalle".
  *
  * Las columnas de "Pedidos" se localizan SIEMPRE por cabecera (obtenerOCrearColumnaPorCabecera),
  * nunca por posición fija -- así, si la hoja ya existía de una versión anterior sin
@@ -512,7 +543,16 @@ function guardarPedidoCompleto(datos) {
     if (idColIndex === -1 || udsColIndex === -1) {
       throw new Error("Faltan columnas 'ID_Componente' o 'Uds_Disponibles' en Stock_Almacen.");
     }
-    const precioColIndex = obtenerOCrearColumnaPorCabecera(stockSheet, stockHeaders, 'Precio_Real_Medio');
+    // MODIFICADO (2026-09-10): un pedido recién registrado TODAVÍA NO HA LLEGADO -- así que suma a
+    // "Stock_En_Camino" (mismo campo que usa "🚚 Añadir Stock en Camino", se crea sola si hace
+    // falta) en vez de a "Uds_Disponibles" directamente. El precio real de ESTE pedido se guarda
+    // en su propio coste medio ponderado "Precio_Real_En_Camino" (paralelo a "Precio_Real_Medio",
+    // pero para lo que aún no ha llegado). Solo al pulsar "✅ Recibir" (ver recibirStockEnCamino)
+    // ese precio pasa a mezclarse de verdad en "Precio_Real_Medio" de lo YA disponible -- así no
+    // se cuenta como coste real confirmado algo que todavía puede no llegar, o llegar solo en
+    // parte.
+    const camColIndex = obtenerOCrearColumnaPorCabecera(stockSheet, stockHeaders, 'Stock_En_Camino');
+    const precioCaminoColIndex = obtenerOCrearColumnaPorCabecera(stockSheet, stockHeaders, 'Precio_Real_En_Camino');
     const origenColIndex = obtenerOCrearColumnaPorCabecera(stockSheet, stockHeaders, 'Ultimo_ID_Pedido');
 
     const filasDetalle = [];
@@ -530,25 +570,26 @@ function guardarPedidoCompleto(datos) {
       }
 
       if (filaEncontrada !== -1) {
-        const udsActual = Number(stockData[filaEncontrada][udsColIndex]) || 0;
-        const precioActual = Number(stockData[filaEncontrada][precioColIndex]) || 0;
-        const nuevoUds = udsActual + cantidad;
-        const nuevoPrecioMedio = (udsActual > 0 && precioActual > 0)
-          ? redondear(((precioActual * udsActual) + (precioReal * cantidad)) / nuevoUds, 4)
+        const camActual = Number(stockData[filaEncontrada][camColIndex]) || 0;
+        const precioCaminoActual = Number(stockData[filaEncontrada][precioCaminoColIndex]) || 0;
+        const nuevoCamino = camActual + cantidad;
+        const nuevoPrecioCamino = (camActual > 0 && precioCaminoActual > 0)
+          ? redondear(((precioCaminoActual * camActual) + (precioReal * cantidad)) / nuevoCamino, 4)
           : precioReal;
 
-        stockSheet.getRange(filaEncontrada + 2, udsColIndex + 1).setValue(nuevoUds);
-        stockSheet.getRange(filaEncontrada + 2, precioColIndex + 1).setValue(nuevoPrecioMedio);
+        stockSheet.getRange(filaEncontrada + 2, camColIndex + 1).setValue(nuevoCamino);
+        stockSheet.getRange(filaEncontrada + 2, precioCaminoColIndex + 1).setValue(nuevoPrecioCamino);
         stockSheet.getRange(filaEncontrada + 2, origenColIndex + 1).setValue(idPedido);
         // Se actualiza también en memoria por si otra línea del MISMO pedido repite este
         // componente (no debería pasar, pero así el siguiente cálculo parte del valor correcto).
-        stockData[filaEncontrada][udsColIndex] = nuevoUds;
-        stockData[filaEncontrada][precioColIndex] = nuevoPrecioMedio;
+        stockData[filaEncontrada][camColIndex] = nuevoCamino;
+        stockData[filaEncontrada][precioCaminoColIndex] = nuevoPrecioCamino;
       } else {
         const filaNueva = new Array(stockHeaders.length).fill('');
         filaNueva[idColIndex] = idComponente;
-        filaNueva[udsColIndex] = cantidad;
-        filaNueva[precioColIndex] = precioReal;
+        filaNueva[udsColIndex] = 0;
+        filaNueva[camColIndex] = cantidad;
+        filaNueva[precioCaminoColIndex] = precioReal;
         filaNueva[origenColIndex] = idPedido;
         stockSheet.getRange(stockSheet.getLastRow() + 1, 1, 1, filaNueva.length).setValues([filaNueva]);
         stockData.push(filaNueva);

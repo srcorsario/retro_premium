@@ -672,10 +672,12 @@ async function enviarDatosPedido() {
     });
 
     if (exito) {
-        if (confirm("✅ ¡Pedido guardado correctamente!\n\nPulsa Aceptar para refrescar la web y ver los cambios.")) {
+        // MODIFICADO (2026-09-10): el pedido se suma a "Stock en Camino" (todavía no ha llegado),
+        // no a stock disponible -- se aclara aquí para que no se confunda con una recepción.
+        if (confirm("✅ ¡Pedido guardado correctamente!\n\nSe ha sumado a \"Stock en Camino\" (aún no ha llegado). Cuando llegue, pulsa \"✅ Recibir\" en su fila para pasarlo a disponible.\n\nPulsa Aceptar para refrescar la web y ver los cambios.")) {
             location.reload();
         } else {
-            mostrarMensaje('msg-pedidos', '✅ Pedido guardado. Refresca la web cuando quieras.', false);
+            mostrarMensaje('msg-pedidos', '✅ Pedido guardado en "Stock en Camino". Refresca la web cuando quieras.', false);
         }
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al procesar el pedido en Google Sheets.', true);

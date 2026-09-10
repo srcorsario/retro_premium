@@ -255,7 +255,7 @@
                 <div id="pedido-lineas-container" style="display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto;"></div>
             </div>
 
-            <p style="font-size:12px; color:var(--text-secondary); margin-top:5px;">El precio unitario que pongas por artículo es el que factura el proveedor (sin envío/aduana). El gasto extra del pedido se reparte proporcionalmente al valor de cada línea, y el resultado se suma al stock físico de cada componente con su coste medio ponderado.</p>
+            <p style="font-size:12px; color:var(--text-secondary); margin-top:5px;">El precio unitario que pongas por artículo es el que factura el proveedor (sin envío/manipulación/aduana). El gasto extra del pedido se reparte proporcionalmente al valor de cada línea. Como el pedido todavía no ha llegado, la cantidad se suma a "Stock en Camino" (no a stock disponible) con su precio real ya calculado -- ese precio se mezclará en el coste medio real solo cuando confirmes la llegada con "✅ Recibir" en su fila.</p>
 
             <div id="msg-pedido-modal" style="font-size:13px; margin-top:10px;"></div>
 
