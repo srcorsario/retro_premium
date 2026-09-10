@@ -558,7 +558,12 @@ function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit, tamanoLote) {
                         </tr>`;
                     }
                     const avisoStock = d.sinStock ? ' ⚠️' : '';
-                    const etiquetaProveedor = ETIQUETA_PROVEEDOR_KIT[d.proveedor] || d.proveedor || '';
+                    // NUEVO 2026-09-10: si el precio viene de un pedido real (Stock_Almacen), en vez
+                    // del proveedor de catálogo se muestra "precio real" en verde -- ese precio ya
+                    // lleva su envío/aduanas repartidos, por eso no hay columna de envío aparte.
+                    const etiquetaProveedor = d.esPrecioReal
+                        ? '<span style="color:var(--success);">precio real</span>'
+                        : (ETIQUETA_PROVEEDOR_KIT[d.proveedor] || d.proveedor || '');
                     const envioTexto = d.envioProrrateado > 0 ? `+${formatearPrecioLocal(d.envioProrrateado)}€ envío` : '—';
                     return `<tr>
                         <td>${d.idComp} <span style="color:var(--text-secondary);">(${etiquetaProveedor})</span>${avisoStock}</td>

@@ -34,7 +34,7 @@ function recalcularYRenderizarKits(nuevoTamanoLote) {
     }
     const tamanoLote = obtenerTamanoLoteGuardado();
     const extra = {
-        preciosPorKit: calcularPreciosPorKit(cacheKitsBase.datos, cacheKitsBase.datosComponentes, cacheKitsBase.sustituciones, tamanoLote),
+        preciosPorKit: calcularPreciosPorKit(cacheKitsBase.datos, cacheKitsBase.datosComponentes, cacheKitsBase.sustituciones, tamanoLote, cacheKitsBase.datosStock),
         tamanoLote
     };
     renderTabla('contenedor-tabla', cacheKitsBase.datos, 'Kits_Consolas', extra);
@@ -115,7 +115,17 @@ function parseNumeroES(valor) {
 // una misma unidad de stock se contaba como "cubierta" a la vez en TODOS los kits que usan ese
 // componente, dando una sensación falsa de ahorro. El precio de Kits es un valor ORIENTATIVO del
 // kit completo (como si se comprara todo desde cero), no "cuánto me falta comprar ahora mismo".
-function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, cantidadKitsPorPedido) {
+// MODIFICADO 2026-09-10 (a petición del usuario -- "utiliza el precio real medio/pendiente si
+// existen, el más alto de los dos, para un valor cada vez más real"): esto NO reintroduce el
+// problema de arriba (no se descuenta ninguna unidad de stock ni se "reserva" nada) -- solo se
+// sustituye el PRECIO/UD de referencia (catálogo) por el coste real ya calculado a partir de los
+// pedidos reales (Precio_Real_Medio / Precio_Real_En_Camino de Stock_Almacen), cuando exista, para
+// ese componente. Si existen los dos valores para un mismo componente se usa el más alto de los
+// dos (más conservador/realista). Un componente resuelto así ya NO pasa por la preselección de
+// proveedor (TME/LCSC/AliExpress) ni se le prorratea envío/aduanas aparte -- ese precio real YA
+// lleva su envío/aduanas/descuento repartidos (ver guardarPedidoCompleto/aplicarAduanaAPedido en
+// Codigo.gs), así que sumarle otro prorrateo encima duplicaría ese coste.
+function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, cantidadKitsPorPedido, datosStock) {
     const sustitucionesMap = {}; // ID_Nuevo -> ID_Original
     (sustituciones || []).forEach(row => {
         const idNuevo = (row['ID_Nuevo'] || '').trim();
@@ -123,6 +133,19 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
         if (idNuevo && idOriginal) sustitucionesMap[idNuevo] = idOriginal;
     });
     const grupoDe = (id) => sustitucionesMap[id] || id;
+
+    // NUEVO 2026-09-10: precio real por ID_Componente literal (Stock_Almacen), tomando el mayor
+    // entre Precio_Real_Medio (stock ya recibido) y Precio_Real_En_Camino (pedidos aún por
+    // llegar) cuando existe alguno de los dos (>0).
+    const precioRealPorLiteralId = {};
+    (datosStock || []).forEach(row => {
+        const literalId = (row['ID_Componente'] || '').trim();
+        if (!literalId) return;
+        const medio = parseNumeroES(row['Precio_Real_Medio']);
+        const camino = parseNumeroES(row['Precio_Real_En_Camino']);
+        const mejorPrecioReal = Math.max(medio || 0, camino || 0);
+        if (mejorPrecioReal > 0) precioRealPorLiteralId[literalId] = mejorPrecioReal;
+    });
 
     // Por cada ID_Componente literal, todas sus opciones de precio (una por proveedor que lo
     // tenga registrado en Componentes), con su proveedor y si esa opción concreta está sin stock
@@ -147,6 +170,22 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
     // tiene stock real en el proveedor. Devuelve null si el literalId no tiene ningún precio
     // registrado en absoluto.
     function resolverComponente(idComp, cantidadNecesaria) {
+        // NUEVO 2026-09-10: si tenemos un precio real (ya con envío/aduanas repartidos) para este
+        // componente, se usa directamente y NO se pasa por la preselección de proveedor de
+        // catálogo -- ni se le prorratea envío aparte (ver comentario arriba de la función). Esto
+        // aplica incluso si el componente no tiene ningún precio de catálogo registrado.
+        const precioReal = precioRealPorLiteralId[idComp];
+        if (precioReal > 0) {
+            return {
+                idComp,
+                proveedor: null,
+                precioUnitario: precioReal,
+                coste: precioReal * cantidadNecesaria,
+                sinStock: false,
+                esPrecioReal: true
+            };
+        }
+
         const opciones = opcionesPorLiteralId[idComp];
         if (!opciones || opciones.length === 0) return null;
 
@@ -225,9 +264,10 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
                     proveedor: mejorOpcion.proveedor,
                     precioUnitario: mejorOpcion.precioUnitario,
                     costeArticulo: mejorOpcion.coste,
-                    envioProrrateado: 0, // se rellena más abajo, una vez sumado todo el kit
+                    envioProrrateado: 0, // se rellena más abajo, una vez sumado todo el kit (0 si es precio real, ver abajo)
                     subtotal: mejorOpcion.coste,
-                    sinStock: mejorOpcion.sinStock
+                    sinStock: mejorOpcion.sinStock,
+                    esPrecioReal: !!mejorOpcion.esPrecioReal
                 });
             } else {
                 // Ningún literal del grupo tiene precio -- no se puede sumar. Se deja constancia
@@ -661,8 +701,10 @@ async function cargarVista(nombrePestana) {
 
     // NUEVO: en la pestaña Kits calculamos también el precio total estimado de cada uno (ver
     // calcularPreciosPorKit) -- necesita Componentes (precios) y Sustituciones (para no contar dos
-    // veces un componente y su sustituto). NO usa Stock_Almacen -- el precio de Kits es un valor
-    // orientativo del kit completo, no descuenta lo que ya tengas comprado (ver comentario en
+    // veces un componente y su sustituto). MODIFICADO 2026-09-10: ahora también pedimos
+    // Stock_Almacen para poder usar el precio REAL (Precio_Real_Medio/Precio_Real_En_Camino) de un
+    // componente en vez del precio de catálogo cuando exista -- esto NO descuenta unidades de
+    // stock ni "reserva" nada, solo sustituye el precio/ud usado (ver comentario en
     // calcularPreciosPorKit). Guardamos los datos base en cacheKitsBase para poder recalcular solo
     // el precio (p.ej. al cambiar la casilla "Kits por pedido") sin volver a pedir las hojas.
     let extra;
@@ -672,9 +714,10 @@ async function cargarVista(nombrePestana) {
         if (ENV.SHEETS['Sustituciones']) {
             sustituciones = await obtenerDatos('Sustituciones');
         }
-        cacheKitsBase = { datos, datosComponentes, sustituciones };
+        const datosStock = await obtenerDatos('Stock_Almacen');
+        cacheKitsBase = { datos, datosComponentes, sustituciones, datosStock };
         const tamanoLote = obtenerTamanoLoteGuardado();
-        extra = { preciosPorKit: calcularPreciosPorKit(datos, datosComponentes, sustituciones, tamanoLote), tamanoLote };
+        extra = { preciosPorKit: calcularPreciosPorKit(datos, datosComponentes, sustituciones, tamanoLote, datosStock), tamanoLote };
     }
 
     // NUEVO (2026-09-09): en la pestaña Stock Físico calculamos también "Packs que podemos
