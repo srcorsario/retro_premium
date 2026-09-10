@@ -305,6 +305,7 @@ function renderStockAlmacen(container, datos, extra) {
             <button id="btn-add-stock" class="btn" style="background: var(--success);">➕ Añadir Stock</button>
             <button id="btn-add-stock-camino" class="btn" style="background: var(--primary);">🚚 Añadir Stock en Camino</button>
             <button id="btn-nuevo-pedido" class="btn" style="background: var(--tme-color);">📦 Nuevo Pedido</button>
+            <button id="btn-aplicar-aduana" class="btn" style="background: var(--danger);">🛃 Aplicar Aduanas</button>
         </div>`;
 
     if (!datos || datos.length === 0) {

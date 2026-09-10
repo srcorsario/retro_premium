@@ -82,6 +82,52 @@ function separarCSVLinea(linea) {
     return resultado;
 }
 
+// NUEVO (2026-09-10): lee una pestaña CUALQUIERA directamente desde Apps Script (doGet, que ya
+// existe en Codigo.gs) en vez de desde el CSV público -- útil para hojas que no están publicadas
+// con su propio gid en config.js (como "Pedidos", que solo se lee para el modal "🛃 Aplicar
+// Aduanas"). Usa JSONP (parámetro callback=..., que doGet ya soporta) en vez de fetch normal
+// porque el dominio de Apps Script no añade cabeceras CORS a sus respuestas -- un fetch() directo
+// fallaría en el navegador. JSONP no tiene ese problema porque es solo un <script> más.
+export function obtenerDatosViaAppsScript(nombrePestana, timeoutMs = 12000) {
+    return new Promise((resolve) => {
+        if (ENV.API_URL === 'PENDING_APP_SCRIPT_URL') { resolve([]); return; }
+
+        const nombreCallback = `jsonpPedidos_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+        let resuelto = false;
+
+        const limpiar = () => {
+            delete window[nombreCallback];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            clearTimeout(temporizador);
+        };
+
+        window[nombreCallback] = (data) => {
+            if (resuelto) return;
+            resuelto = true;
+            limpiar();
+            resolve(Array.isArray(data) ? data : []);
+        };
+
+        const script = document.createElement('script');
+        script.src = `${ENV.API_URL}?sheet=${encodeURIComponent(nombrePestana)}&callback=${nombreCallback}`;
+        script.onerror = () => {
+            if (resuelto) return;
+            resuelto = true;
+            limpiar();
+            resolve([]);
+        };
+
+        const temporizador = setTimeout(() => {
+            if (resuelto) return;
+            resuelto = true;
+            limpiar();
+            resolve([]);
+        }, timeoutMs);
+
+        document.body.appendChild(script);
+    });
+}
+
 export async function actualizarDatos(payload) {
     if (ENV.API_URL === 'PENDING_APP_SCRIPT_URL') return false;
     try {

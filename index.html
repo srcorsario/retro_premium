@@ -266,6 +266,33 @@
         </div>
     </div>
 
+    <!-- NUEVO (2026-09-10): MODAL APLICAR ADUANAS (pestaña Stock Físico) -- para cuando el gasto
+         de aduana de un pedido ya guardado no se sabía en su momento y se conoce después (avisos
+         de Correos/courier al llegar el paquete). Selecciona un pedido ya existente y aplica (o
+         corrige) su gasto de aduana; Codigo.gs reparte el ajuste entre sus líneas
+         (ver aplicarAduanaAPedido) -->
+    <div id="modal-aduana-pedido" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <h3>🛃 Aplicar Aduanas a un Pedido</h3>
+            <div style="margin-bottom: 15px;">
+                <label for="aduana-id-pedido" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Pedido:</label>
+                <select id="aduana-id-pedido" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                    <option value="">Cargando pedidos...</option>
+                </select>
+            </div>
+            <div style="margin-bottom: 5px;">
+                <label for="aduana-gastos" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Gastos de aduana (€):</label>
+                <input type="number" id="aduana-gastos" step="0.01" min="0" value="0" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+            </div>
+            <p style="font-size:12px; color:var(--text-secondary); margin-top:5px;">Se recalcula el reparto de ESE pedido con este gasto de aduana (el envío/manipulación/descuento no cambian) y se actualiza el precio real de sus artículos. Si ya has recibido parte de este pedido, el ajuste solo afecta a lo que sigue en camino -- aplícalo antes de "✅ Recibir" siempre que puedas.</p>
+            <div id="msg-aduana-modal" style="font-size:13px; margin-top:10px;"></div>
+            <div class="modal-actions">
+                <button id="btn-cancel-aduana" class="btn" style="background: var(--danger);">Cancelar</button>
+                <button id="btn-submit-aduana" class="btn" style="background: var(--success);">Aplicar</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="js/app.js"></script>
 </body>
 </html>

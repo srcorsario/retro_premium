@@ -1,6 +1,6 @@
 // js/pedidos.js
 import ENV from './config.js';
-import { obtenerDatos, actualizarDatos } from './api.js';
+import { obtenerDatos, actualizarDatos, obtenerDatosViaAppsScript } from './api.js';
 import { mostrarMensaje } from './ui.js';
 
 let pedidosInicializado = false;
@@ -41,8 +41,13 @@ export async function inicializarModuloPedidos() {
     const btnAddLineaPedido = document.getElementById('btn-add-linea-pedido');
     const selectProveedorPedido = document.getElementById('pedido-proveedor');
     const checkAduanaPedido = document.getElementById('pedido-aplica-aduana');
+    // NUEVO (2026-09-10): modal "🛃 Aplicar Aduanas" -- mismo patrón, el botón que lo abre
+    // (#btn-aplicar-aduana) se inyecta dinámicamente en ui.js junto a #btn-add-stock, así que se
+    // engancha por delegación más abajo.
+    const btnCancelAduana = document.getElementById('btn-cancel-aduana');
+    const btnSubmitAduana = document.getElementById('btn-submit-aduana');
 
-    if (!select || !btnVerificar || !btnSyncTodo || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnCancelStock || !btnSubmitStock || !btnCancelStockCamino || !btnSubmitStockCamino || !btnCancelRecibir || !btnSubmitRecibir || !btnCancelPedido || !btnSubmitPedido || !btnAddLineaPedido || !selectProveedorPedido || !checkAduanaPedido) return;
+    if (!select || !btnVerificar || !btnSyncTodo || !btnSyncAli || !btnCancelAli || !btnSubmitAli || !btnSyncTme || !btnCancelTme || !btnSubmitTme || !btnCancelStock || !btnSubmitStock || !btnCancelStockCamino || !btnSubmitStockCamino || !btnCancelRecibir || !btnSubmitRecibir || !btnCancelPedido || !btnSubmitPedido || !btnAddLineaPedido || !selectProveedorPedido || !checkAduanaPedido || !btnCancelAduana || !btnSubmitAduana) return;
 
     const datosKits = await obtenerDatos('Kits_Consolas');
     const kitsUnicos = [...new Set(datosKits.map(k => k['ID_Kit']).filter(k => k))];
@@ -81,6 +86,9 @@ export async function inicializarModuloPedidos() {
         const wrap = document.getElementById('pedido-aduana-wrap');
         if (wrap) wrap.style.display = checkAduanaPedido.checked ? 'block' : 'none';
     });
+    // NUEVO (2026-09-10): modal "🛃 Aplicar Aduanas".
+    btnCancelAduana.addEventListener('click', cerrarModalAduanaPedido);
+    btnSubmitAduana.addEventListener('click', enviarAduanaPedido);
 
     // NUEVO: #btn-add-stock (y ahora también #btn-add-stock-camino y .btn-recibir-stock) se
     // regeneran cada vez que ui.js vuelve a pintar la pestaña Stock Físico (renderTabla reemplaza
@@ -93,6 +101,8 @@ export async function inicializarModuloPedidos() {
         if (e.target.closest('#btn-add-stock-camino')) abrirModalStockCamino();
 
         if (e.target.closest('#btn-nuevo-pedido')) abrirModalPedido();
+
+        if (e.target.closest('#btn-aplicar-aduana')) abrirModalAduanaPedido();
 
         const btnRecibir = e.target.closest('.btn-recibir-stock');
         if (btnRecibir) {
@@ -684,3 +694,99 @@ async function enviarDatosPedido() {
     }
 }
 
+// --- NUEVO (2026-09-10): MÓDULO APLICAR ADUANAS (pestaña Stock Físico) -- para cuando el gasto
+// de aduana de un pedido ya guardado no se sabía al crearlo y se conoce después (avisos de
+// Correos/courier al llegar el paquete). Lee la hoja "Pedidos" vía JSONP (obtenerDatosViaAppsScript,
+// no el CSV público -- "Pedidos" no tiene gid en config.js) para poblar el desplegable, y al
+// aplicar llama a la acción 'aplicar_aduana_pedido' (Codigo.gs -> aplicarAduanaAPedido) que
+// recalcula el reparto de ESE pedido y ajusta el stock en camino afectado.
+let pedidosCacheAduana = [];
+
+async function abrirModalAduanaPedido() {
+    const modal = document.getElementById('modal-aduana-pedido');
+    const select = document.getElementById('aduana-id-pedido');
+    const input = document.getElementById('aduana-gastos');
+    if (!modal || !select || !input) return;
+
+    document.getElementById('msg-aduana-modal').innerHTML = '';
+    select.innerHTML = '<option value="">Cargando pedidos...</option>';
+    modal.style.display = 'flex';
+
+    pedidosCacheAduana = await obtenerDatosViaAppsScript('Pedidos');
+
+    if (pedidosCacheAduana.length === 0) {
+        select.innerHTML = '<option value="">-- No hay pedidos guardados todavía --</option>';
+        input.value = '0';
+        return;
+    }
+
+    // Más recientes primero (por fecha si se puede parsear, si no por orden de la hoja invertido).
+    pedidosCacheAduana.sort((a, b) => {
+        const fechaA = new Date(a['Fecha']).getTime() || 0;
+        const fechaB = new Date(b['Fecha']).getTime() || 0;
+        return fechaB - fechaA;
+    });
+
+    select.innerHTML = '';
+    pedidosCacheAduana.forEach(p => {
+        const idPedido = p['ID_Pedido'];
+        if (!idPedido) return;
+        const fecha = p['Fecha'] ? new Date(p['Fecha']).toLocaleDateString('es-ES') : '';
+        const valor = parseFloat(p['Valor_Articulos']) || 0;
+        const aduanaActual = parseFloat(p['Gastos_Aduana']) || 0;
+        const etiquetaAduana = aduanaActual > 0 ? `aduana actual: ${formatearPrecioLocalPedidos(aduanaActual)}€` : 'sin aduana aún';
+        const opt = document.createElement('option');
+        opt.value = idPedido;
+        opt.textContent = `${idPedido} — ${fecha} — valor ${formatearPrecioLocalPedidos(valor)}€ (${etiquetaAduana})`;
+        select.appendChild(opt);
+    });
+
+    // Al elegir un pedido, se precarga su gasto de aduana actual (por si solo hay que corregirlo).
+    select.value = pedidosCacheAduana[0]['ID_Pedido'] || '';
+    select.onchange = () => {
+        const p = pedidosCacheAduana.find(x => x['ID_Pedido'] === select.value);
+        input.value = p ? (parseFloat(p['Gastos_Aduana']) || 0) : '0';
+    };
+    select.onchange();
+}
+
+// Formato local sencillo (2 decimales, coma) -- duplicado del mismo criterio que usa ui.js,
+// para no importar entre módulos solo por esto.
+function formatearPrecioLocalPedidos(n) {
+    return (Math.round(n * 100) / 100).toFixed(2).replace('.', ',');
+}
+
+function cerrarModalAduanaPedido() {
+    const modal = document.getElementById('modal-aduana-pedido');
+    if (modal) modal.style.display = 'none';
+}
+
+async function enviarAduanaPedido() {
+    const msgId = 'msg-aduana-modal';
+    const mostrarError = (texto) => mostrarMensaje(msgId, `❌ ${texto}`, true);
+
+    const idPedido = document.getElementById('aduana-id-pedido').value;
+    const gastosAduana = parseFloat(document.getElementById('aduana-gastos').value);
+
+    if (!idPedido) { mostrarError('Selecciona un pedido.'); return; }
+    if (isNaN(gastosAduana) || gastosAduana < 0) { mostrarError('Indica un gasto de aduana válido (0 o más).'); return; }
+
+    cerrarModalAduanaPedido();
+    mostrarMensaje('msg-pedidos', '🔄 Aplicando aduana al pedido en Google Sheets...', false);
+
+    const exito = await actualizarDatos({
+        action: 'aplicar_aduana_pedido',
+        idPedido,
+        gastosAduana
+    });
+
+    if (exito) {
+        if (confirm(`✅ ¡Aduana aplicada a ${idPedido}!\n\nSe ha repartido entre sus artículos y actualizado el precio real en camino.\n\nPulsa Aceptar para refrescar la web y ver los cambios.`)) {
+            location.reload();
+        } else {
+            mostrarMensaje('msg-pedidos', `✅ Aduana aplicada a ${idPedido}. Refresca la web cuando quieras.`, false);
+        }
+    } else {
+        mostrarMensaje('msg-pedidos', '❌ Error al aplicar la aduana en Google Sheets.', true);
+    }
+}

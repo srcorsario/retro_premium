@@ -605,6 +605,142 @@ function guardarPedidoCompleto(datos) {
 }
 
 /**
+ * NUEVO (2026-09-10): aplica (o corrige) el gasto de aduana de un pedido YA GUARDADO -- acción
+ * 'aplicar_aduana_pedido' desde el modal "🛃 Aplicar Aduanas" de la pestaña Stock Físico. Cubre el
+ * caso, habitual con paquetería internacional, de que la aduana no se sabe hasta que el paquete
+ * llega a casa (o incluso después, si el aviso llega aparte) -- así que al crear el pedido puede
+ * quedar sin aduana, y se añade/corrige más tarde con esta función sin tener que borrar y rehacer
+ * el pedido entero.
+ *
+ * Recalcula el reparto proporcional al valor de ESE pedido (envío/manipulación/descuento se
+ * mantienen tal cual estaban) con el nuevo gasto de aduana, actualiza sus líneas en
+ * "Pedidos_Detalle", y AJUSTA POR DIFERENCIA (no recalculando desde cero) el coste medio
+ * ponderado "Precio_Real_En_Camino" de cada componente afectado en Stock_Almacen -- es decir, le
+ * quita la contribución del precio real ANTIGUO de esa línea y le suma la del precio real NUEVO,
+ * dejando intacta la contribución de cualquier otro pedido que comparta ese mismo componente.
+ *
+ * LÍMITE conocido (mismo motivo que el resto del módulo: coste medio por componente, no por
+ * lote): el ajuste asume que la cantidad de esa línea sigue en camino. Si para cuando se aplica
+ * la aduana ya se ha recibido parte de ese pedido (traspasada a Uds_Disponibles con "✅ Recibir"),
+ * el ajuste se acota a lo que queda en camino ahora mismo de ese componente (nunca más que eso) y
+ * NO corrige retroactivamente lo que ya se recibió y quedó fijado en "Precio_Real_Medio" -- por
+ * eso conviene aplicar la aduana ANTES de recibir, en cuanto se sepa su importe.
+ */
+function aplicarAduanaAPedido(idPedido, gastosAduanaNuevos) {
+  try {
+    if (!idPedido) throw new Error("Falta el ID de pedido.");
+    const gastosAduanaNuevo = Number(gastosAduanaNuevos);
+    if (isNaN(gastosAduanaNuevo) || gastosAduanaNuevo < 0) throw new Error("El gasto de aduana debe ser un número mayor o igual que 0.");
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const hojaPedidos = ss.getSheetByName('Pedidos');
+    if (!hojaPedidos) throw new Error("No se encuentra la pestaña 'Pedidos' (todavía no se ha guardado ningún pedido).");
+    const hojaDetalle = ss.getSheetByName('Pedidos_Detalle');
+    if (!hojaDetalle) throw new Error("No se encuentra la pestaña 'Pedidos_Detalle'.");
+
+    // Localiza el pedido y sus columnas SIEMPRE por cabecera (nunca por posición fija) -- mismo
+    // motivo que en guardarPedidoCompleto: robusto ante cambios de orden/columnas en la hoja.
+    const datosPedidos = hojaPedidos.getDataRange().getValues();
+    const headersPedidos = datosPedidos.shift().map(function(h) { return String(h).trim(); });
+    const idxIdPedido = headersPedidos.indexOf('ID_Pedido');
+    const idxGastosEnvio = headersPedidos.indexOf('Gastos_Envio');
+    const idxGastosManipulacion = headersPedidos.indexOf('Gastos_Manipulacion');
+    const idxDescuento = headersPedidos.indexOf('Descuento');
+    const idxAplicaAduana = headersPedidos.indexOf('Aplica_Aduana');
+    const idxGastosAduana = headersPedidos.indexOf('Gastos_Aduana');
+    const idxValorArticulos = headersPedidos.indexOf('Valor_Articulos');
+    const idxGastoExtraTotal = headersPedidos.indexOf('Gasto_Extra_Total');
+    if (idxIdPedido === -1 || idxValorArticulos === -1) {
+      throw new Error("La hoja 'Pedidos' no tiene el formato esperado (faltan columnas clave).");
+    }
+
+    let filaPedidoIndex = -1;
+    for (let i = 0; i < datosPedidos.length; i++) {
+      if (String(datosPedidos[i][idxIdPedido]).trim() === String(idPedido).trim()) { filaPedidoIndex = i; break; }
+    }
+    if (filaPedidoIndex === -1) throw new Error(`No se encuentra el pedido "${idPedido}".`);
+
+    const filaPedido = datosPedidos[filaPedidoIndex];
+    const gastosEnvio = idxGastosEnvio !== -1 ? (Number(filaPedido[idxGastosEnvio]) || 0) : 0;
+    const gastosManipulacion = idxGastosManipulacion !== -1 ? (Number(filaPedido[idxGastosManipulacion]) || 0) : 0;
+    const descuento = idxDescuento !== -1 ? (Number(filaPedido[idxDescuento]) || 0) : 0;
+    const valorArticulos = Number(filaPedido[idxValorArticulos]) || 0;
+
+    const nuevoGastoExtraTotal = gastosEnvio + gastosManipulacion + gastosAduanaNuevo - descuento;
+    const nuevoFactorReparto = valorArticulos > 0 ? (nuevoGastoExtraTotal / valorArticulos) : 0;
+
+    const filaSheetIndex = filaPedidoIndex + 2; // +1 por la cabecera, +1 porque getRange es 1-based
+    if (idxAplicaAduana !== -1) hojaPedidos.getRange(filaSheetIndex, idxAplicaAduana + 1).setValue(true);
+    if (idxGastosAduana !== -1) hojaPedidos.getRange(filaSheetIndex, idxGastosAduana + 1).setValue(redondear(gastosAduanaNuevo, 2));
+    if (idxGastoExtraTotal !== -1) hojaPedidos.getRange(filaSheetIndex, idxGastoExtraTotal + 1).setValue(redondear(nuevoGastoExtraTotal, 2));
+
+    // Recalcula cada línea de ESTE pedido en "Pedidos_Detalle" y ajusta Stock_Almacen por diferencia.
+    const datosDetalle = hojaDetalle.getDataRange().getValues();
+    const headersDetalle = datosDetalle.shift().map(function(h) { return String(h).trim(); });
+    const idxDetIdPedido = headersDetalle.indexOf('ID_Pedido');
+    const idxDetIdComp = headersDetalle.indexOf('ID_Componente');
+    const idxDetCantidad = headersDetalle.indexOf('Cantidad');
+    const idxDetPrecioProducto = headersDetalle.indexOf('Precio_Unitario_Producto');
+    const idxDetPrecioReal = headersDetalle.indexOf('Precio_Unitario_Real');
+    if (idxDetIdPedido === -1 || idxDetIdComp === -1 || idxDetCantidad === -1 || idxDetPrecioProducto === -1 || idxDetPrecioReal === -1) {
+      throw new Error("La hoja 'Pedidos_Detalle' no tiene el formato esperado (faltan columnas clave).");
+    }
+
+    const stockSheet = ss.getSheetByName('Stock_Almacen');
+    let stockData = null, stockHeaders = null, idColIndex = -1, camColIndex = -1, precioCaminoColIndex = -1;
+    if (stockSheet) {
+      stockData = stockSheet.getDataRange().getValues();
+      stockHeaders = stockData.shift().map(function(h) { return String(h).trim(); });
+      idColIndex = stockHeaders.indexOf('ID_Componente');
+      camColIndex = stockHeaders.indexOf('Stock_En_Camino');
+      precioCaminoColIndex = stockHeaders.indexOf('Precio_Real_En_Camino');
+    }
+
+    let lineasActualizadas = 0;
+    for (let i = 0; i < datosDetalle.length; i++) {
+      if (String(datosDetalle[i][idxDetIdPedido]).trim() !== String(idPedido).trim()) continue;
+
+      const idComponente = String(datosDetalle[i][idxDetIdComp]).trim();
+      const cantidadLinea = Number(datosDetalle[i][idxDetCantidad]) || 0;
+      const precioProducto = Number(datosDetalle[i][idxDetPrecioProducto]) || 0;
+      const precioRealAntiguo = Number(datosDetalle[i][idxDetPrecioReal]) || 0;
+      const precioRealNuevo = redondear(precioProducto * (1 + nuevoFactorReparto), 4);
+
+      hojaDetalle.getRange(i + 2, idxDetPrecioReal + 1).setValue(precioRealNuevo);
+      lineasActualizadas++;
+
+      if (stockSheet && idColIndex !== -1 && camColIndex !== -1 && precioCaminoColIndex !== -1) {
+        for (let j = 0; j < stockData.length; j++) {
+          if (String(stockData[j][idColIndex]).trim() !== idComponente) continue;
+
+          const camActual = Number(stockData[j][camColIndex]) || 0;
+          if (camActual <= 0) break; // nada en camino de este componente ahora mismo -- no hay nada que ajustar
+
+          const precioCaminoActual = Number(stockData[j][precioCaminoColIndex]) || 0;
+          // Cuánta cantidad de ESTA línea se asume que sigue en camino -- acotada a lo que hay en
+          // camino ahora mismo del componente, por si ya se recibió parte de este pedido (ver
+          // límite conocido en el comentario de cabecera de esta función).
+          const cantidadAjuste = Math.min(cantidadLinea, camActual);
+          const valorTotalCaminoActual = precioCaminoActual * camActual;
+          const valorTotalCaminoNuevo = valorTotalCaminoActual - (cantidadAjuste * precioRealAntiguo) + (cantidadAjuste * precioRealNuevo);
+          const nuevoPrecioCaminoMedio = redondear(Math.max(valorTotalCaminoNuevo, 0) / camActual, 4);
+
+          stockSheet.getRange(j + 2, precioCaminoColIndex + 1).setValue(nuevoPrecioCaminoMedio);
+          stockData[j][precioCaminoColIndex] = nuevoPrecioCaminoMedio;
+          break;
+        }
+      }
+    }
+
+    if (lineasActualizadas === 0) throw new Error(`El pedido "${idPedido}" no tiene ninguna línea en 'Pedidos_Detalle'.`);
+
+    return `Aduana aplicada a ${idPedido}: ${redondear(gastosAduanaNuevo, 2)}€ repartidos entre ${lineasActualizadas} línea(s). Nuevo gasto extra del pedido: ${redondear(nuevoGastoExtraTotal, 2)}€.`;
+  } catch (err) {
+    throw new Error("Error al aplicar aduana al pedido: " + err.message);
+  }
+}
+
+/**
  * NUEVO: wrapper fino para guardar en Variantes_TME, usado por doPost (acción
  * 'update_tme_manual', desde el modal de la web) -- guarda UN solo tramo.
  */
@@ -2184,6 +2320,15 @@ function doPost(e) {
     // registra el pedido (cabecera + líneas) y actualiza el coste medio ponderado de Stock_Almacen.
     if (action === 'guardar_pedido_completo') {
       const msg = guardarPedidoCompleto(payload.pedido);
+      return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // NUEVO (2026-09-10): Acción para el modal "🛃 Aplicar Aduanas" de la pestaña Stock Físico --
+    // aplica o corrige el gasto de aduana de un pedido ya guardado (para cuando no se sabe hasta
+    // que llega a casa) y reparte el ajuste entre sus líneas.
+    if (action === 'aplicar_aduana_pedido') {
+      const msg = aplicarAduanaAPedido(payload.idPedido, payload.gastosAduana);
       return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
         .setMimeType(ContentService.MimeType.JSON);
     }
