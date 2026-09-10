@@ -564,11 +564,16 @@ function crearFilaLineaPedido(idsComponentes) {
     inputPrecio.step = '0.0001';
     inputPrecio.style.cssText = 'flex:1; padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--border-color); border-radius:4px; box-sizing:border-box;';
 
+    // MODIFICADO (2026-09-10): flex:'0 0 auto' para que este botón nunca se encoja ni desaparezca
+    // si la fila queda apretada (select+cantidad+precio en poco ancho) -- y title/aria-label para
+    // que se entienda que sirve para quitar la línea, no solo un icono suelto.
     const btnQuitar = document.createElement('button');
     btnQuitar.type = 'button';
     btnQuitar.className = 'btn-small btn-quitar-linea-pedido';
-    btnQuitar.style.background = 'var(--danger)';
+    btnQuitar.style.cssText = 'background:var(--danger); flex:0 0 auto; padding:6px 12px;';
     btnQuitar.textContent = '✕';
+    btnQuitar.title = 'Quitar esta línea';
+    btnQuitar.setAttribute('aria-label', 'Quitar esta línea');
     btnQuitar.addEventListener('click', () => fila.remove());
 
     fila.appendChild(selectComp);
@@ -633,14 +638,26 @@ async function enviarDatosPedido() {
     const lineas = [];
     for (const fila of filas) {
         const idComponente = fila.querySelector('.pedido-linea-componente').value;
-        const cantidad = parseFloat(fila.querySelector('.pedido-linea-cantidad').value);
-        const precioUnitario = parseFloat(fila.querySelector('.pedido-linea-precio').value);
+        const cantidadStr = fila.querySelector('.pedido-linea-cantidad').value;
+        const precioStr = fila.querySelector('.pedido-linea-precio').value;
+
+        // NUEVO (2026-09-10): una línea añadida por error (p.ej. dos clics seguidos en "+ Añadir
+        // línea") y dejada TOTALMENTE en blanco se ignora sola al guardar -- no hace falta que el
+        // usuario la borre a mano con el botón "✕" (que sigue ahí, por si prefiere quitarla del
+        // todo en vez de dejarla vacía). Si está solo A MEDIAS rellena, sí se avisa: eso suele ser
+        // un descuido real (p.ej. eligió el componente pero se le olvidó el precio).
+        if (!idComponente && !cantidadStr && !precioStr) continue;
+
+        const cantidad = parseFloat(cantidadStr);
+        const precioUnitario = parseFloat(precioStr);
         if (!idComponente || !(cantidad > 0) || !(precioUnitario > 0)) {
-            mostrarError('Revisa las líneas: cada una necesita componente, cantidad y precio unitario válidos.');
+            mostrarError('Revisa las líneas: cada una necesita componente, cantidad y precio unitario válidos (o déjala totalmente en blanco para que se ignore, o quítala con el botón ✕).');
             return;
         }
         lineas.push({ idComponente, cantidad, precioUnitario });
     }
+
+    if (lineas.length === 0) { mostrarError('Añade al menos un artículo al pedido.'); return; }
 
     cerrarModalPedido();
     mostrarMensaje('msg-pedidos', '🔄 Guardando pedido en Google Sheets...', false);
