@@ -565,8 +565,15 @@ function renderKitsAgrupados(datos, visibleHeaders, preciosPorKit, tamanoLote) {
                         ? '<span style="color:var(--success);">precio real</span>'
                         : (ETIQUETA_PROVEEDOR_KIT[d.proveedor] || d.proveedor || '');
                     const envioTexto = d.envioProrrateado > 0 ? `+${formatearPrecioLocal(d.envioProrrateado)}€ envío` : '—';
+                    // NUEVO 2026-09-10: si este hueco figura en Kits_Consolas como otro componente
+                    // (el "original" descatalogado) pero el precio se ha calculado con su sustituto
+                    // real en stock, se avisa igual que en Stock Físico -- para que no extrañe ver
+                    // aquí un ID distinto al que aparece en la ficha del kit.
+                    const avisoSustituto = d.idOriginal
+                        ? ` <span style="color:#3b82f6; font-size:0.85em;" title="En Kits_Consolas este hueco figura como ${d.idOriginal}, pero el precio se calcula con su sustituto real en stock (hoja Sustituciones)">💬 (sustituye a ${d.idOriginal})</span>`
+                        : '';
                     return `<tr>
-                        <td>${d.idComp} <span style="color:var(--text-secondary);">(${etiquetaProveedor})</span>${avisoStock}</td>
+                        <td>${d.idComp} <span style="color:var(--text-secondary);">(${etiquetaProveedor})</span>${avisoStock}${avisoSustituto}</td>
                         <td style="text-align:right; color:var(--text-secondary);">${d.cantidad} × ${formatearPrecioUnitarioLocal(d.precioUnitario)}€</td>
                         <td style="text-align:right; color:var(--text-secondary);">${envioTexto}</td>
                         <td style="text-align:right; font-weight:bold;">${formatearPrecioLocal(d.subtotal)}€</td>

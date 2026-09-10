@@ -147,6 +147,27 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
         if (mejorPrecioReal > 0) precioRealPorLiteralId[literalId] = mejorPrecioReal;
     });
 
+    // NUEVO 2026-09-10 (a petición del usuario -- "en kits debes utilizar el componente que
+    // tenemos en stock, que a veces es un sustituto, y no el que consta como principal"): por
+    // diseño Kits_Consolas SIEMPRE lista el componente "original" de cada hueco (nunca se toca al
+    // gestionar una sustitución, ver hoja Sustituciones), pero si ese original está descatalogado
+    // el stock/precio real vive bajo su sustituto. Mismo criterio ya usado en Stock Físico
+    // (calcularRequisitosPorKit / construirStockPorIdLiteral): un sustituto solo "cuenta" si tiene
+    // unidades reales (almacén + en camino) en Stock_Almacen -- si no, seguimos usando el original
+    // (que es donde sigue estando el stock/precio de referencia).
+    const sustitutosDeOriginal = {}; // ID_Original -> [ID_Nuevo, ...]
+    Object.entries(sustitucionesMap).forEach(([idNuevo, idOriginal]) => {
+        if (!sustitutosDeOriginal[idOriginal]) sustitutosDeOriginal[idOriginal] = [];
+        sustitutosDeOriginal[idOriginal].push(idNuevo);
+    });
+    const stockPorIdLiteralKits = construirStockPorIdLiteral(datosStock);
+    function resolverIdConStockReal(idComp) {
+        const sustitutos = sustitutosDeOriginal[idComp];
+        if (!sustitutos || sustitutos.length === 0) return idComp;
+        const conStock = sustitutos.find(id => (stockPorIdLiteralKits[id] || 0) > 0);
+        return conStock || idComp;
+    }
+
     // Por cada ID_Componente literal, todas sus opciones de precio (una por proveedor que lo
     // tenga registrado en Componentes), con su proveedor y si esa opción concreta está sin stock
     // EN EL PROVEEDOR ahora mismo (necesario para poder preseleccionar TME en vez de "el más
@@ -227,8 +248,17 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
             const cantidad = parseFloat(fila['Cantidad']) || 0;
             if (!idComp || cantidad <= 0) return;
             const grupo = grupoDe(idComp);
+            // NUEVO 2026-09-10: si idComp es un "original" descatalogado y su sustituto es el que
+            // realmente tenemos en stock, usamos el sustituto para resolver precio/proveedor --
+            // ver resolverIdConStockReal arriba. idOriginal solo se guarda cuando difiere, para
+            // poder avisar en el popup de qué hueco viene realmente.
+            const idParaPrecio = resolverIdConStockReal(idComp);
             if (!porGrupo[grupo]) porGrupo[grupo] = [];
-            porGrupo[grupo].push({ idComp, cantidad });
+            porGrupo[grupo].push({
+                idComp: idParaPrecio,
+                cantidad,
+                idOriginal: idParaPrecio !== idComp ? idComp : null
+            });
         });
 
         let totalArticulos = 0;
@@ -245,11 +275,11 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
             // ya resuelta (proveedor preseleccionado + cantidad menos stock) -- multiplicada por
             // SU propia cantidad (que puede diferir de la de su pareja).
             let mejorOpcion = null;
-            opcionesGrupo.forEach(({ idComp, cantidad }) => {
+            opcionesGrupo.forEach(({ idComp, cantidad, idOriginal }) => {
                 const resuelto = resolverComponente(idComp, cantidad);
                 if (!resuelto) return;
                 if (!mejorOpcion || resuelto.coste < mejorOpcion.coste) {
-                    mejorOpcion = { ...resuelto, cantidad };
+                    mejorOpcion = { ...resuelto, cantidad, idOriginal };
                 }
             });
             if (mejorOpcion) {
@@ -260,6 +290,7 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
                 }
                 desglose.push({
                     idComp: mejorOpcion.idComp,
+                    idOriginal: mejorOpcion.idOriginal || null,
                     cantidad: mejorOpcion.cantidad,
                     proveedor: mejorOpcion.proveedor,
                     precioUnitario: mejorOpcion.precioUnitario,
