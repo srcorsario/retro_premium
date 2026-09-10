@@ -223,6 +223,20 @@
                     <input type="number" id="pedido-gastos-envio" step="0.01" min="0" value="0" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
                 </div>
             </div>
+            <!-- NUEVO (2026-09-10): gastos de manipulación/preparación (a petición del usuario) --
+                 se suman siempre junto al gasto de envío, repartidos igual entre las líneas -- y
+                 un descuento en € que RESTA del gasto extra a repartir (por si el proveedor aplica
+                 algún descuento sobre el pedido). -->
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <div style="flex: 1;">
+                    <label for="pedido-gastos-manipulacion" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Gastos de manipulación (€):</label>
+                    <input type="number" id="pedido-gastos-manipulacion" step="0.01" min="0" value="0" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                </div>
+                <div style="flex: 1;">
+                    <label for="pedido-descuento" style="display:block; font-size:12px; margin-bottom:5px; color:var(--text-secondary);">Descuento (€):</label>
+                    <input type="number" id="pedido-descuento" step="0.01" min="0" value="0" style="width: 100%; padding: 8px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                </div>
+            </div>
             <div style="margin-bottom: 15px;">
                 <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary); cursor:pointer;">
                     <input type="checkbox" id="pedido-aplica-aduana"> Aplicar gasto de aduanas a este pedido

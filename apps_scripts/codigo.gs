@@ -419,12 +419,16 @@ function generarIdPedido(hojaPedidos, proveedor) {
 /**
  * NUEVO (2026-09-10): guarda un pedido completo desde el formulario "📦 Nuevo Pedido" de la
  * pestaña Stock Físico -- acción 'guardar_pedido_completo'. `datos` = { proveedor, fecha,
- * gastosEnvio, aplicaAduana, gastosAduana, lineas: [{idComponente, cantidad, precioUnitario}, ...] }.
+ * gastosEnvio, gastosManipulacion, descuento, aplicaAduana, gastosAduana,
+ * lineas: [{idComponente, cantidad, precioUnitario}, ...] }.
  *
- * Reparte el gasto extra (envío + aduana, si aplicaAduana) entre las líneas del pedido
- * PROPORCIONALMENTE AL VALOR de cada línea (cantidad × precioUnitario) sobre el valor total del
- * pedido -- mismo criterio que ya usa el simulador de kits para prorratear envío/aduanas. Con eso
- * calcula Precio_Unitario_Real = Precio_Unitario_Producto × (1 + gastoExtraTotal/valorArticulos).
+ * Reparte el gasto extra NETO (envío + manipulación + aduana, si aplicaAduana, MENOS el
+ * descuento) entre las líneas del pedido PROPORCIONALMENTE AL VALOR de cada línea (cantidad ×
+ * precioUnitario) sobre el valor total del pedido -- mismo criterio que ya usa el simulador de
+ * kits para prorratear envío/aduanas. Con eso calcula Precio_Unitario_Real =
+ * Precio_Unitario_Producto × (1 + gastoExtraTotal/valorArticulos). Los gastos de envío y de
+ * manipulación (y el descuento) se aplican siempre, no dependen de aplicaAduana -- ese flag solo
+ * controla si se suma también Gastos_Aduana.
  *
  * Registra una fila en "Pedidos" (cabecera), una fila por línea en "Pedidos_Detalle", y actualiza
  * Stock_Almacen: suma la cantidad a Uds_Disponibles y recalcula un COSTE MEDIO PONDERADO en la
@@ -436,6 +440,11 @@ function generarIdPedido(hojaPedidos, proveedor) {
  * vinieron de qué pedido si llegan de proveedores distintos -- solo el último pedido que tocó ese
  * componente queda registrado; el desglose exacto por pedido siempre queda consultable en
  * "Pedidos_Detalle".
+ *
+ * Las columnas de "Pedidos" se localizan SIEMPRE por cabecera (obtenerOCrearColumnaPorCabecera),
+ * nunca por posición fija -- así, si la hoja ya existía de una versión anterior sin
+ * "Gastos_Manipulacion", esa columna se añade sola al final sin descuadrar ninguna columna ya
+ * existente (mismo motivo por el que Stock_Almacen ya hacía esto con Stock_En_Camino).
  */
 function guardarPedidoCompleto(datos) {
   try {
@@ -450,28 +459,47 @@ function guardarPedidoCompleto(datos) {
     });
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const hojaPedidos = obtenerOCrearHoja(ss, 'Pedidos',
-      ['ID_Pedido', 'Proveedor', 'Fecha', 'Gastos_Envio', 'Aplica_Aduana', 'Gastos_Aduana', 'Valor_Articulos', 'Gasto_Extra_Total']);
+    const COLUMNAS_PEDIDOS = ['ID_Pedido', 'Proveedor', 'Fecha', 'Gastos_Envio', 'Gastos_Manipulacion', 'Descuento', 'Aplica_Aduana', 'Gastos_Aduana', 'Valor_Articulos', 'Gasto_Extra_Total'];
+    const hojaPedidos = obtenerOCrearHoja(ss, 'Pedidos', COLUMNAS_PEDIDOS);
     const hojaDetalle = obtenerOCrearHoja(ss, 'Pedidos_Detalle',
       ['ID_Pedido', 'ID_Componente', 'Cantidad', 'Precio_Unitario_Producto', 'Precio_Unitario_Real']);
+
+    let headersPedidos = hojaPedidos.getRange(1, 1, 1, hojaPedidos.getLastColumn()).getValues()[0].map(function(h) { return String(h).trim(); });
+    const colIndexPedidos = {};
+    COLUMNAS_PEDIDOS.forEach(function(nombreCol) {
+      colIndexPedidos[nombreCol] = obtenerOCrearColumnaPorCabecera(hojaPedidos, headersPedidos, nombreCol);
+    });
 
     const proveedor = String(datos.proveedor).trim();
     const idPedido = generarIdPedido(hojaPedidos, proveedor);
     const fecha = datos.fecha ? new Date(datos.fecha) : new Date();
     const gastosEnvio = Number(datos.gastosEnvio) || 0;
+    const gastosManipulacion = Number(datos.gastosManipulacion) || 0;
+    const descuento = Number(datos.descuento) || 0;
     const aplicaAduana = !!datos.aplicaAduana;
     const gastosAduana = aplicaAduana ? (Number(datos.gastosAduana) || 0) : 0;
 
     const valorArticulos = datos.lineas.reduce(function(acc, l) {
       return acc + (Number(l.cantidad) * Number(l.precioUnitario));
     }, 0);
-    const gastoExtraTotal = gastosEnvio + gastosAduana;
+    // El descuento RESTA del gasto extra a repartir (puede dejarlo en negativo si el descuento es
+    // mayor que envío+manipulación+aduana juntos -- en ese caso el precio real queda por DEBAJO
+    // del precio de producto, que es justo lo esperable si el descuento compensa de sobra).
+    const gastoExtraTotal = gastosEnvio + gastosManipulacion + gastosAduana - descuento;
     const factorReparto = valorArticulos > 0 ? (gastoExtraTotal / valorArticulos) : 0;
 
-    hojaPedidos.getRange(hojaPedidos.getLastRow() + 1, 1, 1, 8).setValues([[
-      idPedido, proveedor, fecha, redondear(gastosEnvio, 2), aplicaAduana, redondear(gastosAduana, 2),
-      redondear(valorArticulos, 2), redondear(gastoExtraTotal, 2)
-    ]]);
+    const filaPedido = new Array(headersPedidos.length).fill('');
+    filaPedido[colIndexPedidos['ID_Pedido']] = idPedido;
+    filaPedido[colIndexPedidos['Proveedor']] = proveedor;
+    filaPedido[colIndexPedidos['Fecha']] = fecha;
+    filaPedido[colIndexPedidos['Gastos_Envio']] = redondear(gastosEnvio, 2);
+    filaPedido[colIndexPedidos['Gastos_Manipulacion']] = redondear(gastosManipulacion, 2);
+    filaPedido[colIndexPedidos['Descuento']] = redondear(descuento, 2);
+    filaPedido[colIndexPedidos['Aplica_Aduana']] = aplicaAduana;
+    filaPedido[colIndexPedidos['Gastos_Aduana']] = redondear(gastosAduana, 2);
+    filaPedido[colIndexPedidos['Valor_Articulos']] = redondear(valorArticulos, 2);
+    filaPedido[colIndexPedidos['Gasto_Extra_Total']] = redondear(gastoExtraTotal, 2);
+    hojaPedidos.getRange(hojaPedidos.getLastRow() + 1, 1, 1, filaPedido.length).setValues([filaPedido]);
 
     // Se lee Stock_Almacen UNA sola vez para todas las líneas del pedido (evita releer toda la
     // hoja por cada artículo).

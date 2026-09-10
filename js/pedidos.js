@@ -600,6 +600,8 @@ async function abrirModalPedido() {
     document.getElementById('pedido-proveedor-otro').style.display = 'none';
     document.getElementById('pedido-fecha').value = new Date().toISOString().slice(0, 10);
     document.getElementById('pedido-gastos-envio').value = '0';
+    document.getElementById('pedido-gastos-manipulacion').value = '0';
+    document.getElementById('pedido-descuento').value = '0';
     document.getElementById('pedido-aplica-aduana').checked = false;
     document.getElementById('pedido-gastos-aduana').value = '0';
     document.getElementById('pedido-aduana-wrap').style.display = 'none';
@@ -629,6 +631,8 @@ async function enviarDatosPedido() {
 
     const fecha = document.getElementById('pedido-fecha').value || null;
     const gastosEnvio = parseFloat(document.getElementById('pedido-gastos-envio').value) || 0;
+    const gastosManipulacion = parseFloat(document.getElementById('pedido-gastos-manipulacion').value) || 0;
+    const descuento = parseFloat(document.getElementById('pedido-descuento').value) || 0;
     const aplicaAduana = document.getElementById('pedido-aplica-aduana').checked;
     const gastosAduana = aplicaAduana ? (parseFloat(document.getElementById('pedido-gastos-aduana').value) || 0) : 0;
 
@@ -664,7 +668,7 @@ async function enviarDatosPedido() {
 
     const exito = await actualizarDatos({
         action: 'guardar_pedido_completo',
-        pedido: { proveedor, fecha, gastosEnvio, aplicaAduana, gastosAduana, lineas }
+        pedido: { proveedor, fecha, gastosEnvio, gastosManipulacion, descuento, aplicaAduana, gastosAduana, lineas }
     });
 
     if (exito) {
