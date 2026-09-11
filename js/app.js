@@ -650,6 +650,60 @@ function enterizarConAprovechamiento(xLP, requisitosPorVar, restricciones) {
     return xInt;
 }
 
+// NUEVO (a petición del usuario 2026-09-11): "Optimizar reparto" busca el MAYOR NÚMERO TOTAL de
+// packs combinados, pero puede haber varias combinaciones distintas que consigan exactamente ese
+// mismo total -- el simplex + el redondeo de enterizarConAprovechamiento eligen UNA cualquiera de
+// ellas (la que va saliendo primero según el orden interno), y a veces esa elección concreta deja
+// algún kit entero a 0 aunque exista OTRA combinación, con el MISMO total, que le da a ese kit al
+// menos 1 unidad quitándosela a otro kit que comparta componentes y del que sobre margen ("de los
+// que más tenemos", tal cual lo pidió el usuario). Esta pasada final, tras el redondeo, comprueba
+// justo eso: para cada kit que se haya quedado en 0, busca UN ÚNICO kit "donante" (ya con unidades
+// asignadas) al que, quitándole exactamente 1 unidad, le sobre para TODOS los componentes que le
+// faltan a este kit -- probando primero con el donante que más unidades tenga ya asignadas. Si lo
+// encuentra, hace el traspaso: el TOTAL combinado no cambia en ningún caso (siempre es -1 a un
+// donante y +1 al kit en 0), solo se reparte de otra forma. Si NINGÚN donante único cubre lo que
+// falta (el cuello de botella es real, no un reparto arbitrario), el kit se queda en 0 tal cual --
+// esta función nunca baja el total real, que sería sacrificar packs de verdad en vez de repartir
+// mejor lo mismo.
+function rebalancearParaEvitarCeros(xInt, idsKits, requisitosPorVar, restricciones) {
+    const rhsOriginal = restricciones.map(r => r.rhs);
+    const calcularRemaining = (asignacion) => {
+        const remaining = rhsOriginal.slice();
+        requisitosPorVar.forEach((reqs, k) => {
+            reqs.forEach(({ restrIndex, cantidad }) => { remaining[restrIndex] -= asignacion[k] * cantidad; });
+        });
+        return remaining;
+    };
+
+    idsKits.forEach((_, k) => {
+        if (xInt[k] > 0) return; // ya tiene al menos 1, nada que hacer
+        const reqsK = requisitosPorVar[k];
+        if (!reqsK || reqsK.length === 0) return;
+
+        const remaining = calcularRemaining(xInt);
+        // Candidatos a donante: cualquier otro kit con unidades ya asignadas, de más a menos
+        // unidades -- así se prueba primero con "los que más tenemos" antes que con uno que
+        // apenas tenga margen.
+        const candidatos = idsKits
+            .map((_, j) => j)
+            .filter(j => j !== k && xInt[j] > 0)
+            .sort((a, b) => xInt[b] - xInt[a]);
+
+        for (const donante of candidatos) {
+            const remainingSim = remaining.slice();
+            requisitosPorVar[donante].forEach(({ restrIndex, cantidad }) => { remainingSim[restrIndex] += cantidad; });
+            const cabeAhora = reqsK.every(({ restrIndex, cantidad }) => remainingSim[restrIndex] >= cantidad - 1e-9);
+            if (cabeAhora) {
+                xInt[donante] -= 1;
+                xInt[k] += 1;
+                break;
+            }
+        }
+    });
+
+    return xInt;
+}
+
 // Conecta el solver genérico con los datos reales del proyecto: por cada kit, cuánto necesita de
 // cada "grupo" de componente (requisitosPorKit, ver calcularRequisitosPorKit) y cuánto hay de cada
 // uno (stockPorGrupo, ver calcularStockPorGrupo -- ya incluye lo que está "en camino"). Devuelve
@@ -677,7 +731,8 @@ function optimizarRepartoKits(requisitosPorKit, stockPorGrupo) {
 
     const objetivo = new Array(idsKits.length).fill(1); // maximizar la SUMA de todos los kits, cada uno vale igual
     const xLP = resolverLP(idsKits.length, restricciones, objetivo);
-    const xInt = enterizarConAprovechamiento(xLP, requisitosPorVar, restricciones);
+    const xIntBase = enterizarConAprovechamiento(xLP, requisitosPorVar, restricciones);
+    const xInt = rebalancearParaEvitarCeros(xIntBase, idsKits, requisitosPorVar, restricciones);
 
     const asignacion = {};
     let total = 0;
