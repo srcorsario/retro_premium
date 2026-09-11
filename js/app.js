@@ -441,6 +441,20 @@ function calcularRequisitosPorKit(datosKits, sustitucionesMap, stockPorIdLiteral
         }
     });
 
+    // FIX 2026-09-11 (bug real de código, detectado por el usuario): si un kit tiene, por error de
+    // copiar/pegar al crearlo, DOS filas en Kits_Consolas para el mismo hueco físico -- una con el
+    // ID original (p.ej. FUSE-PICO-1.5A-AXIAL) y otra con el ID de su sustituto (p.ej.
+    // 025101.5MXL) -- antes se guardaba el "idComp" LITERAL de la fila que ganase el desempate por
+    // cantidad (y si las cantidades eran iguales, ganaba la que apareciera PRIMERO en la hoja, por
+    // simple orden de iteración) en vez de resolverlo siempre igual. Eso hacía que ese kit en
+    // concreto mostrara el ID "crudo" que trajera esa fila (a veces el original, a veces ya el
+    // sustituto) SIN pasar por etiquetaComponenteSustituto -- mientras que un kit con una única
+    // fila (el caso normal, sin duplicados) sí se resolvía bien porque ahí "idComp" y "grupo"
+    // siempre coincidían. Ahora se guarda siempre "grupo" (el ID canónico -- el original, o el
+    // propio ID si no tiene sustitución registrada) como "idComp", nunca el literal de la fila
+    // que gane el desempate: así el resultado es el mismo pase lo que pase en Kits_Consolas
+    // (una fila, dos filas duplicadas, en el orden que sea), y etiquetaComponenteSustituto siempre
+    // recibe el ID correcto para decidir si mostrar el sustituto o no.
     const porGrupo = {};
     (datosKits || []).forEach(row => {
         const idKit = row['ID_Kit'];
@@ -450,7 +464,7 @@ function calcularRequisitosPorKit(datosKits, sustitucionesMap, stockPorIdLiteral
         const grupo = sustitucionesMap[idComp] || idComp;
         if (!porGrupo[idKit]) porGrupo[idKit] = {};
         if (!porGrupo[idKit][grupo] || cantidad > porGrupo[idKit][grupo].cantidad) {
-            porGrupo[idKit][grupo] = { grupo, cantidad, idComp, sustitutos: sustitutosPorGrupo[grupo] || [] };
+            porGrupo[idKit][grupo] = { grupo, cantidad, idComp: grupo, sustitutos: sustitutosPorGrupo[grupo] || [] };
         }
     });
     const resultado = {};
