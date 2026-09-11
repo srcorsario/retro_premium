@@ -128,6 +128,51 @@ export function obtenerDatosViaAppsScript(nombrePestana, timeoutMs = 12000) {
     });
 }
 
+// NUEVO 2026-09-11: consulta puntual de stock/precio en Mouser para un componente, vía el mismo
+// truco JSONP que obtenerDatosViaAppsScript -- aquí SÍ necesitamos leer la respuesta (stock/precio),
+// así que no vale el patrón "no-cors" que usa actualizarDatos. La apiKey viaja tal cual en la URL
+// de esta petición puntual (nunca se guarda en Codigo.gs ni en ninguna hoja) -- la propia web la
+// lee de una casilla local (localStorage) justo antes de llamar a esta función.
+export function consultarStockMouser(parte, apiKey, timeoutMs = 15000) {
+    return new Promise((resolve) => {
+        if (ENV.API_URL === 'PENDING_APP_SCRIPT_URL') { resolve({ error: 'Web App aún no configurada.' }); return; }
+
+        const nombreCallback = `jsonpMouser_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+        let resuelto = false;
+
+        const limpiar = () => {
+            delete window[nombreCallback];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            clearTimeout(temporizador);
+        };
+
+        window[nombreCallback] = (data) => {
+            if (resuelto) return;
+            resuelto = true;
+            limpiar();
+            resolve(data && typeof data === 'object' ? data : { error: 'Respuesta inesperada.' });
+        };
+
+        const script = document.createElement('script');
+        script.src = `${ENV.API_URL}?action=consultar_mouser&parte=${encodeURIComponent(parte)}&apiKey=${encodeURIComponent(apiKey)}&callback=${nombreCallback}`;
+        script.onerror = () => {
+            if (resuelto) return;
+            resuelto = true;
+            limpiar();
+            resolve({ error: 'No se pudo contactar con la Web App.' });
+        };
+
+        const temporizador = setTimeout(() => {
+            if (resuelto) return;
+            resuelto = true;
+            limpiar();
+            resolve({ error: 'Tiempo de espera agotado consultando Mouser.' });
+        }, timeoutMs);
+
+        document.body.appendChild(script);
+    });
+}
+
 export async function actualizarDatos(payload) {
     if (ENV.API_URL === 'PENDING_APP_SCRIPT_URL') return false;
     try {

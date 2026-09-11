@@ -36,10 +36,19 @@ export const ORDEN_PRESELECCION = ['TME', 'LCSC', 'ALIEXPRESS'];
 // al llegar a España -- ver [[retro-componentes-web]] sobre la queja confirmada de FedEx), porque
 // son dos cargos de origen distinto aunque ambos formen parte del coste real de comprar en LCSC.
 // AliExpress también aplica aduanas (8€), aunque su envío en sí siga siendo gratis.
+// NUEVO 2026-09-11: Mouser (mouser.es/eu.mouser.com) añadido como proveedor -- envío DDP a la UE
+// (aranceles/aduanas ya incluidos en el precio mostrado, sin sorpresas al llegar) y gratis a partir
+// de 75€ de pedido, que es el importe habitual de un pedido de restock -- de ahí 0€ en ambos campos
+// como aproximación razonable (igual de simplificado que el resto de esta tabla, que ya asume un
+// coste fijo por pedido en vez de calcularlo por importe real). De momento NO se ha añadido a
+// ORDEN_PRESELECCION: esa preselección depende de tener datos de stock/precio por componente (como
+// las hojas Variantes_LCSC/AliExpress/TME), y todavía no existe una "Variantes_Mouser" -- se hará
+// cuando se resuelva cómo obtener ese stock (API de Mouser), ver [[retro-componentes-web]].
 const GASTOS_ENVIO = {
     LCSC: { envio: 40, aduanas: 30 },
     ALIEXPRESS: { envio: 0, aduanas: 8 },
-    TME: { envio: 14, aduanas: 0 }
+    TME: { envio: 14, aduanas: 0 },
+    MOUSER: { envio: 0, aduanas: 0 }
 };
 
 // NUEVO: total de gastos (envío + aduanas) de un proveedor, para no repetir la suma en cada sitio

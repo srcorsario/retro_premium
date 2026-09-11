@@ -1,9 +1,15 @@
 // js/pedidos.js
 import ENV from './config.js';
-import { obtenerDatos, actualizarDatos, obtenerDatosViaAppsScript } from './api.js';
+import { obtenerDatos, actualizarDatos, obtenerDatosViaAppsScript, consultarStockMouser } from './api.js';
 import { mostrarMensaje } from './ui.js';
 
 let pedidosInicializado = false;
+
+// NUEVO 2026-09-11: clave de localStorage donde vive la API Key de Mouser -- SOLO en este
+// navegador, nunca se manda a Google Sheets ni se guarda en Codigo.gs (ver comentario en
+// consultarStockMouser de Codigo.gs / api.js). El usuario la pega en la casilla de la pestaña
+// Stock Físico y pulsa "Guardar".
+const LS_MOUSER_API_KEY = 'retro_premium_mouser_api_key';
 
 export async function inicializarModuloPedidos() {
     if (pedidosInicializado) return;
@@ -100,6 +106,13 @@ export async function inicializarModuloPedidos() {
         if (e.target.closest('#btn-aplicar-aduana')) abrirModalAduanaPedido();
 
         if (e.target.closest('#btn-aplicar-recibidos')) aplicarRecibidosLote();
+
+        if (e.target.closest('#btn-guardar-mouser-key')) guardarMouserApiKeyLocal();
+
+        if (e.target.closest('#btn-borrar-mouser-key')) borrarMouserApiKeyLocal();
+
+        const btnMouser = e.target.closest('.btn-mouser-consultar');
+        if (btnMouser) consultarMouserParaFila(btnMouser);
     });
 
     pedidosInicializado = true;
@@ -497,6 +510,74 @@ async function aplicarRecibidosLote() {
     } else {
         mostrarMensaje('msg-pedidos', '❌ Error al recibir los artículos en Google Sheets.', true);
     }
+}
+
+// --- NUEVO (2026-09-11): CONSULTA PUNTUAL DE STOCK/PRECIO EN MOUSER (pestaña Stock Físico) ---
+// La API Key de Mouser vive SOLO en localStorage de este navegador (nunca en Google Sheets ni en
+// Codigo.gs, a petición expresa del usuario) -- viaja únicamente en el momento de pulsar
+// "🔍 Mouser" en una fila concreta, como parámetro de esa única llamada JSONP (ver
+// consultarStockMouser en api.js / Codigo.gs).
+
+function guardarMouserApiKeyLocal() {
+    const input = document.getElementById('mouser-api-key-input');
+    const msg = document.getElementById('msg-mouser-key');
+    if (!input) return;
+    const valor = input.value.trim();
+    if (!valor) {
+        if (msg) { msg.style.color = 'var(--danger)'; msg.textContent = 'Escribe una clave antes de guardar.'; }
+        return;
+    }
+    try {
+        localStorage.setItem(LS_MOUSER_API_KEY, valor);
+        if (msg) { msg.style.color = 'var(--success)'; msg.textContent = '✅ Guardada en este navegador.'; }
+    } catch (e) {
+        if (msg) { msg.style.color = 'var(--danger)'; msg.textContent = 'No se pudo guardar (almacenamiento local no disponible).'; }
+    }
+}
+
+function borrarMouserApiKeyLocal() {
+    const input = document.getElementById('mouser-api-key-input');
+    const msg = document.getElementById('msg-mouser-key');
+    try { localStorage.removeItem(LS_MOUSER_API_KEY); } catch (e) { /* nada que borrar */ }
+    if (input) input.value = '';
+    if (msg) { msg.style.color = 'var(--success)'; msg.textContent = '🗑️ Clave borrada de este navegador.'; }
+}
+
+async function consultarMouserParaFila(boton) {
+    const idComp = boton.getAttribute('data-id');
+    const resultadoDiv = document.querySelector(`.mouser-resultado[data-id="${CSS.escape(idComp)}"]`);
+    let apiKey = '';
+    try { apiKey = localStorage.getItem(LS_MOUSER_API_KEY) || ''; } catch (e) { /* sin almacenamiento local */ }
+
+    if (!apiKey) {
+        if (resultadoDiv) { resultadoDiv.style.color = 'var(--danger)'; resultadoDiv.textContent = '❌ Guarda antes tu clave de Mouser (arriba).'; }
+        return;
+    }
+
+    boton.disabled = true;
+    if (resultadoDiv) { resultadoDiv.style.color = 'var(--text-secondary)'; resultadoDiv.textContent = '⏳ Consultando...'; }
+
+    const resultado = await consultarStockMouser(idComp, apiKey);
+
+    boton.disabled = false;
+    if (!resultadoDiv) return;
+
+    if (resultado.error) {
+        resultadoDiv.style.color = 'var(--danger)';
+        resultadoDiv.textContent = `❌ ${resultado.error}`;
+        return;
+    }
+    if (!resultado.encontrado) {
+        resultadoDiv.style.color = 'var(--danger)';
+        resultadoDiv.textContent = `❌ ${resultado.mensaje || 'No encontrado en Mouser.'}`;
+        return;
+    }
+
+    const mejorTramo = (resultado.tramosPrecio || []).slice(-1)[0];
+    const textoPrecio = mejorTramo ? `${mejorTramo.precio} (${mejorTramo.cantidad}+ uds)` : 'sin tabla de precios';
+    resultadoDiv.style.color = 'var(--success)';
+    resultadoDiv.title = resultado.urlProducto || '';
+    resultadoDiv.textContent = `✅ ${resultado.fabricante || ''} — ${resultado.disponibilidad || '¿stock?'} — ${textoPrecio}`;
 }
 
 // --- NUEVO (2026-09-10): MÓDULO NUEVO PEDIDO (pestaña Stock Físico) -- registra un pedido

@@ -2312,6 +2312,22 @@ function ordenarVariantes(sheetVar) {
  */
 function doGet(e) {
   const callback = e.parameters.callback;
+
+  // NUEVO 2026-09-11: consulta puntual de stock/precio en Mouser (acción 'consultar_mouser'), a
+  // petición del usuario -- ver [[retro-componentes-web]]. Se sirve desde doGet (no doPost) para
+  // poder reutilizar el mismo truco JSONP que ya usa el resto de lecturas de este endpoint y así
+  // esquivar CORS sin necesidad de "no-cors" (aquí SÍ necesitamos leer la respuesta). IMPORTANTE:
+  // la clave de la API de Mouser NUNCA se guarda aquí ni en ninguna hoja -- el usuario la escribe
+  // en un campo local de su navegador (localStorage) y viaja SOLO en esta petición puntual, de
+  // componente en componente, tal como pidió explícitamente ("casilla para introducir la api key
+  // en local").
+  if (e.parameters.action === 'consultar_mouser') {
+    const resultado = consultarStockMouser(e.parameters.parte, e.parameters.apiKey);
+    const jsonStringMouser = JSON.stringify(resultado);
+    if (callback) return ContentService.createTextOutput(callback + "(" + jsonStringMouser + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);
+    return ContentService.createTextOutput(jsonStringMouser).setMimeType(ContentService.MimeType.JSON);
+  }
+
   let sheetName = e.parameters.sheet || 'Componentes';
   try {
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
@@ -2332,6 +2348,72 @@ function doGet(e) {
     return ContentService.createTextOutput(jsonString).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({error: err.message})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// NUEVO 2026-09-11: consulta un componente por su número de parte del FABRICANTE (p.ej.
+// "UHW1E222MHD") en la Mouser Search API. La API de Mouser no busca por número de parte de
+// fabricante directamente (su endpoint /search/partnumber espera el número de parte PROPIO de
+// Mouser) -- así que se usa /search/keyword, que sí acepta el MPN como palabra clave, y de los
+// resultados nos quedamos con el que tenga el mismo ManufacturerPartNumber exacto (sin distinguir
+// mayúsculas/espacios). Devuelve disponibilidad y los tramos de precio (PriceBreaks) tal cual los
+// da Mouser. `apiKey` llega en cada llamada desde el navegador del usuario -- no se guarda aquí.
+function consultarStockMouser(parte, apiKey) {
+  if (!parte) return { error: 'Falta el número de parte a consultar.' };
+  if (!apiKey) return { error: 'Falta la clave de la API de Mouser (introdúcela en la casilla local de la web).' };
+
+  const parteNormalizada = String(parte).trim().toUpperCase();
+  const url = 'https://api.mouser.com/api/v1/search/keyword?apiKey=' + encodeURIComponent(apiKey);
+  const payload = {
+    SearchByKeywordRequest: {
+      keyword: parteNormalizada,
+      records: 10,
+      startingRecord: 0
+    }
+  };
+
+  try {
+    const respuesta = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    const codigo = respuesta.getResponseCode();
+    const cuerpo = JSON.parse(respuesta.getContentText());
+
+    if (cuerpo.Errors && cuerpo.Errors.length > 0) {
+      return { error: 'Mouser: ' + cuerpo.Errors.map(function(er) { return er.Message || JSON.stringify(er); }).join(' | ') };
+    }
+    if (codigo !== 200) {
+      return { error: 'Mouser respondió con código ' + codigo + '.' };
+    }
+
+    const partes = (cuerpo.SearchResults && cuerpo.SearchResults.Parts) || [];
+    const coincidencia = partes.find(function(p) {
+      return String(p.ManufacturerPartNumber || '').trim().toUpperCase() === parteNormalizada;
+    });
+
+    if (!coincidencia) {
+      return { encontrado: false, mensaje: 'No se encontró "' + parte + '" exactamente en Mouser (' + partes.length + ' resultado(s) similares).' };
+    }
+
+    const tramosPrecio = (coincidencia.PriceBreaks || []).map(function(t) {
+      return { cantidad: t.Quantity, precio: t.Price, moneda: t.Currency };
+    });
+
+    return {
+      encontrado: true,
+      fabricante: coincidencia.Manufacturer,
+      numeroParte: coincidencia.ManufacturerPartNumber,
+      numeroParteMouser: coincidencia.MouserPartNumber,
+      disponibilidad: coincidencia.Availability,
+      tramosPrecio: tramosPrecio,
+      urlProducto: coincidencia.ProductDetailUrl || null
+    };
+  } catch (err) {
+    return { error: 'Error consultando Mouser: ' + err.message };
   }
 }
 

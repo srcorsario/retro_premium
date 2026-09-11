@@ -270,7 +270,7 @@ function formatearPrecioUnitarioLocal(n) {
 // NUEVO: etiqueta corta de proveedor para el popup de desglose de precio de Kits -- mismo
 // mapeo que ETIQUETA_PROVEEDOR en pedido.js, duplicado aquí para no importar entre módulos solo
 // por esto (mismo criterio que ya se usa con formatearPrecioLocal/formatearPrecioUnitarioLocal).
-const ETIQUETA_PROVEEDOR_KIT = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME' };
+const ETIQUETA_PROVEEDOR_KIT = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME', MOUSER: 'Mouser' };
 
 // NUEVO (2026-09-09): mismo escape básico de atributos HTML que usa pedido.js localmente --
 // duplicado aquí por el mismo criterio que el resto de helpers de este archivo (no importar entre
@@ -306,6 +306,22 @@ function renderStockAlmacen(container, datos, extra) {
             <button id="btn-add-stock-camino" class="btn" style="background: var(--primary);">🚚 Añadir Stock en Camino</button>
             <button id="btn-nuevo-pedido" class="btn" style="background: var(--tme-color);">📦 Nuevo Pedido</button>
             <button id="btn-aplicar-aduana" class="btn" style="background: var(--danger);">🛃 Aplicar Aduanas</button>
+        </div>`;
+
+    // NUEVO 2026-09-11 (a petición del usuario -- "aplica una casilla para introducir la api key en
+    // local"): la clave de la API de Mouser se guarda SOLO en localStorage de este navegador, nunca
+    // en Google Sheets ni en Codigo.gs -- viaja únicamente en el momento de pulsar "🔍 Mouser" en
+    // una fila (ver consultarStockMouser en api.js). Botón "Guardar"/"Borrar" gestionados en
+    // pedidos.js (event delegation, igual que el resto de botones dinámicos de esta pestaña).
+    let apiKeyGuardada = '';
+    try { apiKeyGuardada = localStorage.getItem('retro_premium_mouser_api_key') || ''; } catch (e) { /* almacenamiento no disponible -- se deja vacío */ }
+    toolbarHtml += `
+        <div style="margin-bottom:16px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px;">
+            <label for="mouser-api-key-input" style="color:var(--text-secondary);">🔑 Mouser API Key (solo en este navegador):</label>
+            <input type="password" id="mouser-api-key-input" value="${escaparAttrStock(apiKeyGuardada)}" placeholder="Pega aquí tu clave de Mouser..." autocomplete="off" style="padding:6px; width:280px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--border-color); border-radius:4px;">
+            <button id="btn-guardar-mouser-key" class="btn" style="background: var(--primary); padding:6px 10px; font-size:12px;">💾 Guardar</button>
+            <button id="btn-borrar-mouser-key" class="btn" style="background: var(--danger); padding:6px 10px; font-size:12px;">🗑️ Borrar</button>
+            <span id="msg-mouser-key" style="color:var(--success);"></span>
         </div>`;
 
     if (!datos || datos.length === 0) {
@@ -376,7 +392,13 @@ function renderStockAlmacen(container, datos, extra) {
         otrasColumnas.forEach(h => {
             htmlBody += `<td title="${escaparAttrStock(fila[h] || '')}">${fila[h] || ''}</td>`;
         });
-        htmlBody += `<td>${accionesHtml}</td></tr>`;
+        // NUEVO 2026-09-11: botón de consulta puntual en Mouser por componente (stock + precio por
+        // tramos), junto a lo que ya hubiera en Acciones -- ver consultarStockMouser en pedidos.js.
+        const mouserHtml = `<div style="margin-top:6px;">
+            <button class="btn-mouser-consultar" data-id="${escaparAttrStock(idComp)}" style="font-size:11px; padding:4px 8px;" title="Consultar stock y precio de este componente en Mouser">🔍 Mouser</button>
+            <div class="mouser-resultado" data-id="${escaparAttrStock(idComp)}" style="font-size:11px; color:var(--text-secondary); margin-top:2px; max-width:220px;"></div>
+        </div>`;
+        htmlBody += `<td>${accionesHtml}${mouserHtml}</td></tr>`;
     });
 
     const tablaHtml = `<table><thead>${htmlHead}</thead><tbody>${htmlBody}</tbody></table>`;
