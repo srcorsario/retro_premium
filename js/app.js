@@ -685,7 +685,8 @@ function recalcularYRenderizarStock() {
         preparables: {
             porKit: preparables,
             nombreConsolaPorKit: cacheStockBase.nombreConsolaPorKit
-        }
+        },
+        valorPorIdComponente: cacheStockBase.valorPorIdComponente
     };
     renderTabla('contenedor-tabla', cacheStockBase.datosStock, 'Stock_Almacen', extra);
 }
@@ -763,6 +764,22 @@ async function cargarVista(nombrePestana) {
         if (ENV.SHEETS['Sustituciones']) {
             sustituciones = await obtenerDatos('Sustituciones');
         }
+
+        // NUEVO 2026-09-11 (a petición del usuario -- "agrega al lado de Id componente la columna
+        // Valor para saber que caracteristicas tiene ese componente"): la hoja "Componentes" tiene
+        // una columna "Valor" (p.ej. "220uF", "2200uF") con la característica principal de cada
+        // ID_Componente -- puede haber varias filas en Componentes para el mismo ID_Componente (una
+        // por proveedor: LCSC/TME/AliExpress), pero comparten el mismo Valor, así que nos vale con
+        // la primera que encontremos.
+        const datosComponentesValor = await obtenerDatos('Componentes');
+        const valorPorIdComponente = {};
+        datosComponentesValor.forEach(row => {
+            const idComp = (row['ID_Componente'] || '').trim();
+            if (idComp && !(idComp in valorPorIdComponente)) {
+                valorPorIdComponente[idComp] = row['Valor'] || '';
+            }
+        });
+
         const sustitucionesMap = {};
         sustituciones.forEach(row => {
             const idNuevo = (row['ID_Nuevo'] || '').trim();
@@ -785,12 +802,13 @@ async function cargarVista(nombrePestana) {
             if (!requisitosPorKit[idKit]) delete reservasPorKit[idKit];
         });
 
-        cacheStockBase = { datosStock: datos, requisitosPorKit, stockPorGrupo, nombreConsolaPorKit };
+        cacheStockBase = { datosStock: datos, requisitosPorKit, stockPorGrupo, nombreConsolaPorKit, valorPorIdComponente };
         extra = {
             preparables: {
                 porKit: calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservasPorKit),
                 nombreConsolaPorKit
-            }
+            },
+            valorPorIdComponente
         };
     }
 

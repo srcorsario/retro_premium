@@ -341,7 +341,12 @@ function renderStockAlmacen(container, datos, extra) {
     const COLUMNAS_FIJAS = ['ID_Componente', 'Uds_Disponibles', 'Stock_En_Camino', 'Stock_Minimo_Alerta', 'Precio_Real_Medio', 'Precio_Real_En_Camino', 'Ultimo_ID_Pedido'];
     const otrasColumnas = Object.keys(datos[0]).filter(h => !COLUMNAS_FIJAS.includes(h));
 
-    let htmlHead = '<tr><th>ID_Componente</th><th>Uds_Disponibles</th><th>Stock en Camino</th><th>Precio Real (pendiente)</th><th>Stock Total (almacén + en camino)</th><th>Precio Real (medio)</th><th>Último Pedido</th>';
+    // NUEVO 2026-09-11 (a petición del usuario -- "agrega al lado de Id componente la columna
+    // Valor para saber que caracteristicas tiene ese componente"): viene de la hoja "Componentes"
+    // (columna "Valor"), calculado en app.js (cargarVista) y pasado aquí en extra.valorPorIdComponente.
+    const valorPorIdComponente = (extra && extra.valorPorIdComponente) || {};
+
+    let htmlHead = '<tr><th>ID_Componente</th><th>Valor</th><th>Uds_Disponibles</th><th>Stock en Camino</th><th>Precio Real (pendiente)</th><th>Stock Total (almacén + en camino)</th><th>Precio Real (medio)</th><th>Último Pedido</th>';
     otrasColumnas.forEach(h => { htmlHead += `<th>${h}</th>`; });
     htmlHead += '<th>Acciones</th></tr>';
 
@@ -381,8 +386,11 @@ function renderStockAlmacen(container, datos, extra) {
         const precioCamino = parseFloat(String(fila['Precio_Real_En_Camino'] || '').replace(',', '.')) || 0;
         const ultimoPedido = fila['Ultimo_ID_Pedido'] || '';
 
+        const valorComp = valorPorIdComponente[idComp] || '';
+
         htmlBody += `<tr ${claseFila}>
             <td title="${escaparAttrStock(idComp)}">${idComp}</td>
+            <td title="${escaparAttrStock(valorComp)}">${valorComp ? escaparAttrStock(valorComp) : '-'}</td>
             <td>${formatearCantidadStock(disponible)}</td>
             <td>${enCamino > 0 ? formatearCantidadStock(enCamino) : '-'}</td>
             <td title="Precio real estimado de lo pedido, aún sin confirmar hasta recibirlo">${precioCamino > 0 ? formatearPrecioUnitarioLocal(precioCamino) + ' €' : '-'}</td>
