@@ -17,9 +17,19 @@ export function renderTabla(contenedorID, datos, nombrePestana, extra) {
     }
 
     // Filtrar filas vacías típicas de Google Sheets
-    const datosLimpios = datos.filter(row => 
+    // FIX: el límite MAX_TABLE_ROWS (pensado para no reventar una tabla plana gigante) NO se aplica
+    // a Kits_Consolas -- ahí cada fila es una LÍNEA de BOM de un kit (no un registro independiente),
+    // así que cortar a 100 filas dejaba el kit que cayera al final de la hoja con su lista de
+    // componentes incompleta en el acordeón (mientras que el precio del kit, calculado aparte en
+    // app.js sobre los datos SIN recortar, seguía saliendo bien -- de ahí la discrepancia detectada
+    // 2026-09-16). El acordeón agrupa por kit y no tiene el mismo problema de rendimiento que una
+    // tabla plana larga, así que aquí no hace falta ese límite.
+    const datosFiltrados = datos.filter(row =>
         Object.values(row).some(val => val !== '' && val !== null && val !== undefined)
-    ).slice(0, ENV.MAX_TABLE_ROWS);
+    );
+    const datosLimpios = (nombrePestana === 'Kits_Consolas')
+        ? datosFiltrados
+        : datosFiltrados.slice(0, ENV.MAX_TABLE_ROWS);
 
     // Si es la pestaña de Kits, usamos la lógica del acordeón (con los mismos toggles de columnas que Componentes)
     if (nombrePestana === 'Kits_Consolas') {
