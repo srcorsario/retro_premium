@@ -22,56 +22,68 @@
             <button class="tab-btn" data-sheet="Variantes_AliExpress">AliExpress Precios</button>
             <button class="tab-btn" data-sheet="Variantes_TME">TME Precios</button>
             <button class="tab-btn" data-sheet="Gastos_Extra">Gastos</button>
+            <!-- NUEVO: pestaña "Pedidos" -- no corresponde a ninguna hoja de Google Sheets (no lleva
+                 data-sheet), solo alterna qué bloque se ve (ver #vista-tabla-wrapper /
+                 #vista-pedidos-wrapper y el listener de pestañas en app.js). Agrupa aquí el módulo
+                 de verificación/sincronización y el generador de pedido, que antes aparecían
+                 siempre debajo de cualquier pestaña. -->
+            <button class="tab-btn" data-tab="pedidos">📦 Pedidos</button>
         </div>
 
-        <!-- TARJETA PRINCIPAL -->
-        <div class="card">
-            <h2 id="titulo-vista">Cargando datos...</h2>
-            <div id="contenedor-tabla" style="overflow-x: auto;">
-                <p>Conectando con Google Sheets...</p>
-            </div>
-        </div>
-
-        <!-- TARJETA SECUNDARIA -->
-        <div class="card" style="margin-top: 20px;">
-            <h2>🛠️ Módulo de Preparación de Pedidos</h2>
-            <p style="color: var(--text-secondary); font-size: 14px;">Selecciona un kit para verificar si tenemos el stock físico necesario en almacén.</p>
-            
-            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
-                <select id="select-kit" style="padding: 10px; border-radius: 4px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); flex-grow: 1;">
-                    <option value="">Cargando kits...</option>
-                </select>
-                <button id="btn-verificar-stock" class="btn">Verificar Stock Físico</button>
-            </div>
-
-            <div style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
-                <!-- MODIFICADO: los 6 botones sueltos de sincronización se han reducido a uno solo
-                     ("Sincronizar Todo"), que en Apps Script encadena LCSC + TME + las 3 columnas
-                     de Kits_Consolas. Se dejan aparte los dos asistentes manuales (AliExpress no se
-                     puede automatizar, y TME manual sirve de respaldo si el automático falla). -->
-                <p style="color: var(--text-secondary); font-size: 14px;">Sincroniza precios y stock desde los proveedores, y las columnas de Kits que dependen de ellos.</p>
-                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button id="btn-sync-todo" class="btn" style="background: var(--success);">🔄 Sincronizar Todo (LCSC + TME + Kits)</button>
-                    <button id="btn-sync-aliexpress" class="btn" style="background: var(--primary);">Añadir Variante AliExpress (Manual)</button>
-                    <button id="btn-sync-tme" class="btn" style="background: var(--tme-color);">Añadir Variante TME (Manual)</button>
+        <!-- BLOQUE DE TABLA (pestañas normales, ligadas a una hoja) -->
+        <div id="vista-tabla-wrapper">
+            <!-- TARJETA PRINCIPAL -->
+            <div class="card">
+                <h2 id="titulo-vista">Cargando datos...</h2>
+                <div id="contenedor-tabla" style="overflow-x: auto;">
+                    <p>Conectando con Google Sheets...</p>
                 </div>
             </div>
-            
-            <div id="msg-pedidos" style="font-size: 14px; line-height: 1.5; margin-top: 15px;"></div>
         </div>
 
-        <!-- NUEVO: TARJETA GENERADOR DE PEDIDO -->
-        <div class="card" style="margin-top: 20px;">
-            <h2>🧾 Generar Pedido</h2>
-            <p style="color: var(--text-secondary); font-size: 14px;">Selecciona los kits que vas a montar y cuántas unidades de cada uno. Se suman los componentes de todos los kits marcados.</p>
+        <!-- BLOQUE DE PEDIDOS (pestaña "📦 Pedidos") -- oculto por defecto, ver app.js -->
+        <div id="vista-pedidos-wrapper" style="display: none;">
+            <!-- TARJETA SECUNDARIA -->
+            <div class="card">
+                <h2>🛠️ Módulo de Preparación de Pedidos</h2>
+                <p style="color: var(--text-secondary); font-size: 14px;">Selecciona un kit para verificar si tenemos el stock físico necesario en almacén.</p>
 
-            <div id="pedido-lista-kits" style="display:flex; flex-direction:column; gap:8px; margin-bottom:15px; max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:10px;">
-                <p style="color:var(--text-secondary); font-size:13px;">Cargando kits...</p>
+                <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
+                    <select id="select-kit" style="padding: 10px; border-radius: 4px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); flex-grow: 1;">
+                        <option value="">Cargando kits...</option>
+                    </select>
+                    <button id="btn-verificar-stock" class="btn">Verificar Stock Físico</button>
+                </div>
+
+                <div style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                    <!-- MODIFICADO: los 6 botones sueltos de sincronización se han reducido a uno solo
+                         ("Sincronizar Todo"), que en Apps Script encadena LCSC + TME + las 3 columnas
+                         de Kits_Consolas. Se dejan aparte los dos asistentes manuales (AliExpress no se
+                         puede automatizar, y TME manual sirve de respaldo si el automático falla). -->
+                    <p style="color: var(--text-secondary); font-size: 14px;">Sincroniza precios y stock desde los proveedores, y las columnas de Kits que dependen de ellos.</p>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button id="btn-sync-todo" class="btn" style="background: var(--success);">🔄 Sincronizar Todo (LCSC + TME + Kits)</button>
+                        <button id="btn-sync-aliexpress" class="btn" style="background: var(--primary);">Añadir Variante AliExpress (Manual)</button>
+                        <button id="btn-sync-tme" class="btn" style="background: var(--tme-color);">Añadir Variante TME (Manual)</button>
+                    </div>
+                </div>
+
+                <div id="msg-pedidos" style="font-size: 14px; line-height: 1.5; margin-top: 15px;"></div>
             </div>
 
-            <button id="btn-calcular-pedido" class="btn" style="background: var(--primary);">Calcular Pedido</button>
+            <!-- NUEVO: TARJETA GENERADOR DE PEDIDO -->
+            <div class="card" style="margin-top: 20px;">
+                <h2>🧾 Generar Pedido</h2>
+                <p style="color: var(--text-secondary); font-size: 14px;">Selecciona los kits que vas a montar y cuántas unidades de cada uno. Se suman los componentes de todos los kits marcados.</p>
 
-            <div id="pedido-resultado" style="margin-top:20px;"></div>
+                <div id="pedido-lista-kits" style="display:flex; flex-direction:column; gap:8px; margin-bottom:15px; max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:10px;">
+                    <p style="color:var(--text-secondary); font-size:13px;">Cargando kits...</p>
+                </div>
+
+                <button id="btn-calcular-pedido" class="btn" style="background: var(--primary);">Calcular Pedido</button>
+
+                <div id="pedido-resultado" style="margin-top:20px;"></div>
+            </div>
         </div>
     </div>
 

@@ -900,12 +900,22 @@ document.addEventListener('DOMContentLoaded', () => {
     inicializarModuloPedido();
     
     // Poner a escuchar los botones de las pestañas
+    // NUEVO: la pestaña "📦 Pedidos" (data-tab="pedidos") no tiene hoja de Google Sheets asociada --
+    // solo alterna qué bloque se ve (#vista-tabla-wrapper con la tabla de la pestaña activa, o
+    // #vista-pedidos-wrapper con el módulo de preparación + generador de pedido, que antes estaban
+    // siempre visibles debajo de cualquier pestaña).
     const botones = document.querySelectorAll('.tab-btn');
+    const vistaTablaWrapper = document.getElementById('vista-tabla-wrapper');
+    const vistaPedidosWrapper = document.getElementById('vista-pedidos-wrapper');
     if (botones && botones.length > 0) {
         botones.forEach(boton => {
             boton.addEventListener('click', (e) => {
                 botones.forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
+
+                const esTabPedidos = e.target.getAttribute('data-tab') === 'pedidos';
+                if (vistaTablaWrapper) vistaTablaWrapper.style.display = esTabPedidos ? 'none' : '';
+                if (vistaPedidosWrapper) vistaPedidosWrapper.style.display = esTabPedidos ? '' : 'none';
 
                 const pestana = e.target.getAttribute('data-sheet');
                 if (pestana) cargarVista(pestana);
