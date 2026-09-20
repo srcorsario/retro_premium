@@ -558,6 +558,12 @@ export function renderDetalleMontarKit(idKit, cantidad, requisitos, stockDisponi
 // unidades COMPLETAS de cada kit hay YA montadas físicamente, sumado cada vez que se usa "🛠️
 // Montar Kit" arriba. No confundir con "Preparables ahora" de "📦 Packs que podemos preparar":
 // aquello es cuánto SE PODRÍA montar con el stock actual, esto es cuánto YA ESTÁ montado de verdad.
+// AMPLIADO (2026-09-20, 2ª petición): cada fila trae ahora su propio control "💰 Vender" -- al
+// vender un kit ya montado deja de estar "listo para enviar", así que esto resta de verdad de
+// Kits_Preparados (acción 'vender_kit', ver venderKit() en Codigo.gs) y deja constancia en una
+// nueva hoja "Kits_Vendidos" (histórico de ventas). A propósito NO toca Stock_Almacen -- las
+// piezas físicas ya se descontaron al montar (ver "🛠️ Montar Kit"), vender solo saca la unidad ya
+// montada de este contador.
 function renderKitsListos(kitsListos, nombreConsolaPorKit) {
     const idsKits = Object.keys(kitsListos || {}).filter(k => (kitsListos[k] || 0) > 0);
     if (idsKits.length === 0) return '';
@@ -570,22 +576,32 @@ function renderKitsListos(kitsListos, nombreConsolaPorKit) {
         return String(a).localeCompare(String(b), 'es', { sensitivity: 'base' });
     });
 
-    const filasHtml = idsKits.map(idKit => `<tr>
-        <td>${escaparAttrStock(idKit)}</td>
-        <td>${escaparAttrStock((nombreConsolaPorKit || {})[idKit] || '')}</td>
-        <td style="font-weight:bold;">${formatearCantidadStock(kitsListos[idKit])}</td>
-    </tr>`).join('');
+    const filasHtml = idsKits.map(idKit => {
+        const cantidadLista = kitsListos[idKit];
+        return `<tr>
+            <td>${escaparAttrStock(idKit)}</td>
+            <td>${escaparAttrStock((nombreConsolaPorKit || {})[idKit] || '')}</td>
+            <td style="font-weight:bold;">${formatearCantidadStock(cantidadLista)}</td>
+            <td>
+                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                    <input type="number" class="input-vender-cantidad" data-kit="${escaparAttrStock(idKit)}" min="1" max="${cantidadLista}" step="1" value="1" style="width:70px; padding:4px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--border-color); border-radius:4px;">
+                    <button class="btn-vender-kit" data-kit="${escaparAttrStock(idKit)}" style="font-size:12px; padding:4px 8px; background:var(--danger);">💰 Vender</button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
 
     return `
         <div class="packs-section">
             <h3>📬 Kits listos para enviar</h3>
-            <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Unidades ya montadas físicamente con "🛠️ Montar Kit" (arriba) y listas para enviar.</p>
+            <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Unidades ya montadas físicamente con "🛠️ Montar Kit" (arriba) y listas para enviar. Cuando vendas alguna, pon la cantidad y pulsa "💰 Vender" en su fila -- se resta de este contador y queda guardado en el histórico de ventas.</p>
             <div style="overflow-x:auto;">
                 <table>
-                    <thead><tr><th>Kit</th><th>Consola</th><th>Listos para enviar</th></tr></thead>
+                    <thead><tr><th>Kit</th><th>Consola</th><th>Listos para enviar</th><th>Acciones</th></tr></thead>
                     <tbody>${filasHtml}</tbody>
                 </table>
             </div>
+            <div id="msg-vender-kit" style="margin-top:8px; font-size:13px;"></div>
         </div>`;
 }
 

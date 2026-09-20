@@ -1155,4 +1155,35 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
+
+    // NUEVO (2026-09-20): botón "💰 Vender" de cada fila de "📬 Kits listos para enviar" --
+    // registra la venta de la cantidad puesta en el input de esa fila (acción 'vender_kit', ver
+    // venderKit() en Codigo.gs): resta de Kits_Preparados y lo guarda en el histórico
+    // "Kits_Vendidos". A propósito NO toca Stock_Almacen (las piezas ya se descontaron al montar).
+    // Mismo patrón de confirmación + recarga que "🛠️ Montar".
+    document.addEventListener('click', async (e) => {
+        const btnVender = e.target.closest('.btn-vender-kit');
+        if (btnVender) {
+            const idKit = btnVender.getAttribute('data-kit');
+            const input = idKit ? document.querySelector(`.input-vender-cantidad[data-kit="${CSS.escape(idKit)}"]`) : null;
+            if (!idKit || !input) return;
+
+            const cantidad = parseInt(input.value, 10);
+            if (isNaN(cantidad) || cantidad <= 0) { mostrarMensaje('msg-vender-kit', '❌ Indica una cantidad vendida mayor que 0.', true); return; }
+
+            mostrarMensaje('msg-vender-kit', '🔄 Registrando la venta en Google Sheets...', false);
+
+            const exito = await actualizarDatos({ action: 'vender_kit', idKit, cantidad });
+
+            if (exito) {
+                if (confirm(`✅ Venta registrada: ${cantidad} ud. de "${idKit}".\n\nSe ha restado del contador de "listos para enviar" y guardado en el histórico de ventas.\n\nOJO: si no había tantas unidades listas como las indicadas, Google Sheets no habrá restado nada (no se puede dejar en negativo) -- refresca para comprobarlo.\n\nPulsa Aceptar para refrescar la web y ver los cambios.`)) {
+                    location.reload();
+                } else {
+                    mostrarMensaje('msg-vender-kit', `✅ Petición enviada. Refresca la web cuando quieras para ver el contador actualizado.`, false);
+                }
+            } else {
+                mostrarMensaje('msg-vender-kit', '❌ Error al registrar la venta en Google Sheets.', true);
+            }
+        }
+    });
 });

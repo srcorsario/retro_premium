@@ -2511,6 +2511,64 @@ function montarKit(idKit, cantidad, seleccion) {
   }
 }
 
+// Igual que generarIdMontaje, pero para la hoja "Kits_Vendidos" -- genera "VENTA nº1", "nº2"...
+function generarIdVenta(hojaVentas) {
+  const ultimaFila = hojaVentas.getLastRow();
+  return `VENTA nº${Math.max(ultimaFila - 1, 0) + 1}`;
+}
+
+/**
+ * NUEVO (2026-09-20): registra la venta de `cantidad` unidades del kit `idKit` -- acción
+ * 'vender_kit' desde el botón "💰 Vender" de la sección "📬 Kits listos para enviar" (pestaña Stock
+ * Físico). Cuando se vende un kit ya montado, deja de estar "listo para enviar" -- esta función
+ * resta de verdad de la hoja "Kits_Preparados" (nunca la deja en negativo: si se pide vender más de
+ * lo que hay "listo" ahora mismo, no resta nada y avisa de cuántas unidades hay de verdad) y deja
+ * constancia en una nueva hoja "Kits_Vendidos" (se crea sola) para poder consultar el histórico de
+ * ventas más adelante -- mismo patrón de auditoría que "Kits_Montados" para montarKit(). A
+ * propósito NO toca Stock_Almacen -- las piezas físicas ya se descontaron al montar el kit (ver
+ * montarKit), vender solo saca la unidad YA MONTADA de la lista de "listos para enviar".
+ */
+function venderKit(idKit, cantidad) {
+  try {
+    if (!idKit) throw new Error("Falta el ID de kit.");
+    const cantidadNum = Number(cantidad);
+    if (!isFinite(cantidadNum) || cantidadNum <= 0 || Math.floor(cantidadNum) !== cantidadNum) {
+      throw new Error("La cantidad vendida debe ser un número entero mayor que 0.");
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheetPreparados = obtenerOCrearHoja(ss, 'Kits_Preparados', ['ID_Kit', 'Cantidad_Lista']);
+    const datosPreparados = sheetPreparados.getDataRange().getValues();
+    const headersPreparados = datosPreparados.shift().map(function(h) { return String(h).trim(); });
+    const colIdPrep = headersPreparados.indexOf('ID_Kit');
+    const colCantPrep = headersPreparados.indexOf('Cantidad_Lista');
+    if (colIdPrep === -1 || colCantPrep === -1) {
+      throw new Error("Faltan columnas 'ID_Kit' o 'Cantidad_Lista' en Kits_Preparados.");
+    }
+
+    const idKitTrim = String(idKit).trim();
+    let filaIndex = -1;
+    for (let i = 0; i < datosPreparados.length; i++) {
+      if (String(datosPreparados[i][colIdPrep] || '').trim() === idKitTrim) { filaIndex = i; break; }
+    }
+    const disponibles = filaIndex !== -1 ? (Number(datosPreparados[filaIndex][colCantPrep]) || 0) : 0;
+    if (disponibles < cantidadNum) {
+      throw new Error(`Solo hay ${redondear(disponibles, 2)} unidad(es) de "${idKit}" listas para enviar -- no se puede vender ${cantidadNum}.`);
+    }
+
+    const nuevoTotal = redondear(disponibles - cantidadNum, 4);
+    sheetPreparados.getRange(filaIndex + 2, colCantPrep + 1).setValue(nuevoTotal);
+
+    const sheetVentas = obtenerOCrearHoja(ss, 'Kits_Vendidos', ['ID_Venta', 'ID_Kit', 'Cantidad', 'Fecha']);
+    const idVenta = generarIdVenta(sheetVentas);
+    sheetVentas.getRange(sheetVentas.getLastRow() + 1, 1, 1, 4).setValues([[idVenta, idKit, cantidadNum, new Date()]]);
+
+    return `✅ ${idVenta}: vendido(s) ${cantidadNum} kit(s) de "${idKit}". Quedan ${nuevoTotal} listos para enviar de este kit.`;
+  } catch (err) {
+    throw new Error("Error al registrar la venta: " + err.message);
+  }
+}
+
 /**
  * =====================================================
  * SISTEMA WEB API (PARA GITHUB PAGES)
@@ -2729,6 +2787,14 @@ function doPost(e) {
     // escribe nada) y suma al contador de "Kits_Preparados" (listos para enviar). Ver montarKit().
     if (action === 'montar_kit') {
       const msg = montarKit(payload.idKit, payload.cantidad, payload.seleccion);
+      return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // NUEVO (2026-09-20): Acción para el botón "💰 Vender" de "📬 Kits listos para enviar" (pestaña
+    // Stock Físico) -- resta de Kits_Preparados y deja constancia en Kits_Vendidos. Ver venderKit().
+    if (action === 'vender_kit') {
+      const msg = venderKit(payload.idKit, payload.cantidad);
       return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
         .setMimeType(ContentService.MimeType.JSON);
     }
