@@ -116,6 +116,25 @@ async function cargarDatosPedido() {
         stockPorId[id] = (stockPorId[id] || 0) + parseNumeroES(row['Uds_Disponibles']) + parseNumeroES(row['Stock_En_Camino']);
     });
 
+    // NUEVO (2026-09-20): precio real (Stock_Almacen) por GRUPO -- el usuario detectó que un
+    // componente comprado suelto y dado de alta a mano en Stock_Almacen (sin ningún proveedor
+    // sincronizado en Componentes/Variantes_*) no tenía NINGÚN precio de referencia aquí, aunque
+    // sí lo tiene en Stock_Almacen columna H (Precio_Real_Medio) -- se usa como última opción de
+    // precio cuando ningún proveedor real cubre la cantidad, para no dejar la fila sin ningún
+    // precio con el que "probar costes". Se toma el MÁS ALTO entre Precio_Real_Medio (lo ya
+    // recibido) y Precio_Real_En_Camino (lo pedido pero aún sin llegar) -- mismo criterio que ya
+    // usa app.js para el precio estimado de la pestaña Kits. Se agrupa por "grupo" (no por ID
+    // literal) porque el precio real puede estar registrado bajo el ID del SUSTITUTO aunque
+    // Kits_Consolas siga listando el original (hoja Sustituciones) -- así una fila encuentra el
+    // precio real sea cual sea de los dos IDs el que lo tenga.
+    const precioRealPorId = {};
+    datosStock.forEach(row => {
+        const id = (row['ID_Componente'] || '').trim();
+        if (!id) return;
+        const precio = Math.max(parseNumeroES(row['Precio_Real_Medio']), parseNumeroES(row['Precio_Real_En_Camino']));
+        if (precio > (precioRealPorId[id] || 0)) precioRealPorId[id] = precio;
+    });
+
     // NUEVO: la hoja "Sustituciones" es opcional -- si todavía no está en config.js (SHEETS),
     // seguimos funcionando sin fusionar componente original + sustituto.
     let sustituciones = [];
@@ -128,6 +147,14 @@ async function cargarDatosPedido() {
         const idNuevo = (row['ID_Nuevo'] || '').trim();
         const idOriginal = (row['ID_Original'] || '').trim();
         if (idNuevo && idOriginal) sustitucionesMap[idNuevo] = idOriginal;
+    });
+
+    // Ahora que ya tenemos sustitucionesMap, agrupamos precioRealPorId (calculado arriba) por
+    // "grupo" -- ver comentario de más arriba sobre por qué hace falta.
+    const precioRealPorGrupo = {};
+    Object.keys(precioRealPorId).forEach(id => {
+        const grupo = sustitucionesMap[id] || id;
+        if (precioRealPorId[id] > (precioRealPorGrupo[grupo] || 0)) precioRealPorGrupo[grupo] = precioRealPorId[id];
     });
 
     // NUEVO: en vez de quedarnos con un único tramo de pack (el que guarda Componentes),
@@ -180,8 +207,25 @@ async function cargarDatosPedido() {
         });
     });
 
-    cacheDatosPedido = { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId };
+    cacheDatosPedido = { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo };
     return cacheDatosPedido;
+}
+
+// NUEVO (2026-09-20): "compra" sintética para la opción de precio real de Stock_Almacen -- a
+// diferencia de un proveedor de verdad, no tiene tramos por tamaño de pack, es un precio fijo por
+// unidad (el coste medio real ya pagado). Devuelve la MISMA FORMA de objeto que calcularMejorCompra
+// para que el resto del código (textoYColorOpcion, recalcularPedido...) no tenga que distinguir
+// entre ambos casos.
+function compraConPrecioReal(precioReal, cantidad) {
+    if (!(precioReal > 0) || cantidad <= 0) {
+        return { logrado: false, desglose: [], totalUnidades: 0, totalPrecio: 0 };
+    }
+    return {
+        logrado: true,
+        desglose: [{ udsPack: 1, unidades: cantidad, precioUnitario: precioReal, esPrecioReal: true }],
+        totalUnidades: cantidad,
+        totalPrecio: cantidad * precioReal
+    };
 }
 
 // NUEVO (fix): dado el conjunto de tramos de precio reales de UN proveedor para UN componente,
@@ -282,7 +326,7 @@ async function calcularPedido() {
         resultadoDiv.innerHTML = `<p style="color:var(--danger);">Error al calcular el pedido: ${err.message}. Prueba a recargar la página.</p>`;
         return;
     }
-    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId } = datosPedido;
+    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo } = datosPedido;
 
     // NUEVO (fix): si "Kits_Consolas" o "Componentes" vinieron vacíos (p.ej. porque su petición
     // se quedó sin respuesta -- ver fetchConTimeout en api.js -- y se agotaron los reintentos),
@@ -313,7 +357,7 @@ async function calcularPedido() {
         return;
     }
 
-    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId);
+    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo);
 }
 
 // NUEVO: el "grupo" de un ID_Componente literal es el ID original si tiene un sustituto
@@ -334,7 +378,8 @@ function escapeAttr(texto) {
         .replace(/>/g, '&gt;');
 }
 
-function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId) {
+function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo) {
+    precioRealPorGrupo = precioRealPorGrupo || {};
     // MODIFICADO: antes se ordenaba solo alfabéticamente por ID. Ahora se ordena primero por
     // "grupo" (el ID original si el componente tiene un sustituto en Sustituciones, o su propio
     // ID si no) para que un componente y su sustituto queden SIEMPRE en filas consecutivas, y en
@@ -389,8 +434,33 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                 const compra = calcularMejorCompra(tiers, cantidadPedidaInicial);
                 const hayStock = tiers.some(t => t.stockPacks > 0);
                 return Object.assign({}, opt, { compra, hayStock });
-            })
-            .sort((a, b) => ORDEN_PROVEEDORES.indexOf(a.proveedor) - ORDEN_PROVEEDORES.indexOf(b.proveedor));
+            });
+
+        // NUEVO (2026-09-20): si este hueco tiene un precio real registrado en Stock_Almacen
+        // (precioRealPorGrupo -- p.ej. un componente comprado suelto y dado de alta a mano, sin
+        // ningún proveedor sincronizado en Componentes/Variantes_*), se añade como una opción MÁS,
+        // no como sustituto de las reales -- así sigue habiendo con qué "probar costes" aunque
+        // ningún proveedor tenga hoy stock/tramo para este componente. Va SIEMPRE al final de la
+        // lista (ver el sort de abajo) porque no es un proveedor al que hacerle un pedido nuevo,
+        // es solo la referencia de lo que ya costó la última vez.
+        const precioReal = precioRealPorGrupo[grupo] || 0;
+        if (precioReal > 0) {
+            opcionesConDatos.push({
+                literalId: idComp,
+                proveedor: 'STOCK_REAL',
+                marca: '',
+                link: '',
+                compra: compraConPrecioReal(precioReal, cantidadPedidaInicial),
+                hayStock: true,
+                precioReal
+            });
+        }
+
+        opcionesConDatos.sort((a, b) => {
+            const ia = a.proveedor === 'STOCK_REAL' ? 999 : ORDEN_PROVEEDORES.indexOf(a.proveedor);
+            const ib = b.proveedor === 'STOCK_REAL' ? 999 : ORDEN_PROVEEDORES.indexOf(b.proveedor);
+            return ia - ib;
+        });
 
         // NUEVO: la opción marcada por defecto ya NO es "la primera con stock suficiente en el
         // orden de visualización" -- ahora se prioriza TME aunque el artículo salga más caro,
@@ -403,6 +473,15 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                 if (candidata && candidata.hayStock && candidata.compra.desglose.length > 0 && candidata.compra.logrado) {
                     proveedorPreseleccionado = proveedorPref;
                     break;
+                }
+            }
+            // NUEVO: si ningún proveedor real cubre la cantidad, pero hay precio real de
+            // Stock_Almacen disponible, se preselecciona como última opción -- mejor una
+            // referencia de coste real que dejar la fila sin nada marcado.
+            if (!proveedorPreseleccionado) {
+                const candidataReal = opcionesConDatos.find(o => o.proveedor === 'STOCK_REAL');
+                if (candidataReal && candidataReal.compra.totalUnidades > 0 && candidataReal.compra.logrado) {
+                    proveedorPreseleccionado = 'STOCK_REAL';
                 }
             }
         }
@@ -445,6 +524,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                             data-literal-id="${escapeAttr(opt.literalId)}"
                             data-marca="${escapeAttr(opt.marca || '')}"
                             data-link="${escapeAttr(opt.link || '')}"
+                            data-precio-real="${opt.precioReal || ''}"
                             ${checked} ${disabled}
                             class="pedido-radio-opcion">
                         <span class="pedido-texto-opcion" style="${colorTexto}">${etiquetaHtml} — ${textoCompra}</span>
@@ -482,7 +562,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     contenedor.innerHTML = `
-        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. Si ningún proveedor tiene hoy stock/tramo de precio para un componente pero ya lo has comprado antes (tiene precio real en Stock_Almacen), aparece como última opción "💰 Precio real (ya en stock)" -- no es un sitio donde pedirlo, es solo el coste medio real ya pagado, para poder seguir estimando el total aunque no haya proveedor sincronizado para ese componente. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
@@ -525,6 +605,12 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
 // el link empiece por http(s):// antes de convertirlo en <a> -- si viene vacío o con otra cosa, se
 // deja como texto plano (evita esquemas raros tipo "javascript:" colándose desde la hoja).
 function etiquetaProveedorHtml(proveedor, marca, link) {
+    // NUEVO (2026-09-20): opción de precio real de Stock_Almacen (ver compraConPrecioReal) -- se
+    // marca claramente como algo distinto de un proveedor real, para que no se confunda con un
+    // sitio donde hacer un pedido nuevo.
+    if (proveedor === 'STOCK_REAL') {
+        return `<span style="color:var(--success);" title="Precio medio real de lo que ya has comprado de este componente (Stock_Almacen, columna Precio_Real_Medio/Precio_Real_En_Camino) -- no es un proveedor al que hacerle un pedido nuevo, es solo una referencia de coste por si necesitas más de lo que ya tienes en stock">💰 Precio real (ya en stock)</span>`;
+    }
     const etiquetaProveedor = ETIQUETA_PROVEEDOR[proveedor] || proveedor;
     const etiquetaMarca = marca ? ` — ${marca}` : '';
     const texto = `${etiquetaProveedor}${etiquetaMarca}`;
@@ -541,7 +627,7 @@ function etiquetaProveedorHtml(proveedor, marca, link) {
 // stock": significa que el stock que ya tienes cubre toda la necesidad y no hace falta pedir nada.
 function textoYColorOpcion(compra, hayStock, cantidadPedida) {
     const desgloseTexto = compra.desglose
-        .map(d => `${d.unidades} uds a ${formatearPrecioUnitarioLocal(d.precioUnitario)}€/ud (tramo ≥${d.udsPack}u)`)
+        .map(d => `${d.unidades} uds a ${formatearPrecioUnitarioLocal(d.precioUnitario)}€/ud ${d.esPrecioReal ? '(precio real de compra)' : `(tramo ≥${d.udsPack}u)`}`)
         .join(' + ');
     if (cantidadPedida <= 0) {
         return { desgloseTexto: '', texto: '📦 Cubierto con el stock que ya tienes', color: 'color:var(--text-secondary);' };
@@ -583,9 +669,20 @@ function actualizarFilaPorCantidad(tr) {
         const literalId = radio.getAttribute('data-literal-id');
         const marca = radio.getAttribute('data-marca') || '';
         const link = radio.getAttribute('data-link') || '';
-        const tiers = (tiersPorProveedor[proveedor] && tiersPorProveedor[proveedor][literalId]) || [];
-        const compra = calcularMejorCompra(tiers, cantidadPedida);
-        const hayStock = tiers.some(t => t.stockPacks > 0);
+
+        // NUEVO (2026-09-20): la opción de precio real de Stock_Almacen no tiene tramos por
+        // proveedor -- se recalcula aparte con el precio fijo guardado en data-precio-real (ver
+        // renderTablaPedido) en vez de buscarla en tiersPorProveedor (que no la conoce).
+        let compra, hayStock;
+        if (proveedor === 'STOCK_REAL') {
+            const precioReal = parseNumeroES(radio.getAttribute('data-precio-real'));
+            compra = compraConPrecioReal(precioReal, cantidadPedida);
+            hayStock = precioReal > 0;
+        } else {
+            const tiers = (tiersPorProveedor[proveedor] && tiersPorProveedor[proveedor][literalId]) || [];
+            compra = calcularMejorCompra(tiers, cantidadPedida);
+            hayStock = tiers.some(t => t.stockPacks > 0);
+        }
         const usable = cantidadPedida > 0 && hayStock && compra.desglose.length > 0;
 
         radio.disabled = !usable;
