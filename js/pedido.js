@@ -725,6 +725,15 @@ function recalcularPedido() {
     const porTienda = {};
     ORDEN_PROVEEDORES.forEach(p => { porTienda[p] = { items: [], subtotal: 0 }; });
 
+    // NUEVO (2026-09-20): el usuario detectó que los componentes con "💰 Precio real (ya en
+    // stock)" seleccionado (ver renderTablaPedido/compraConPrecioReal) sí sumaban al "Precio
+    // estimado" de arriba, pero no aparecían en NINGÚN sitio del desglose de abajo -- porTienda
+    // solo agrupa ORDEN_PROVEEDORES (proveedores de verdad), así que esos componentes
+    // desaparecían sin explicación y el "Total del pedido" de más abajo no cuadraba con el
+    // "Precio estimado" de arriba. Se agrupan aparte (no son "una tienda", no llevan gastos de
+    // envío -- ya los tienes) para que su desglose también se vea y sumen al total general.
+    const yaEnStock = { items: [], subtotal: 0 };
+
     const filas = Array.from(tbody.querySelectorAll('tr'));
 
     // NUEVO: como una pareja de filas (componente + su sustituto) ahora comparte el mismo
@@ -793,12 +802,15 @@ function recalcularPedido() {
 
         totalPrecio += precioEstimado;
 
+        // MODIFICADO: se usa el atributo data-id-componente (id "limpio") en vez del texto de
+        // la celda, que ahora puede incluir el icono 💬 de pareja.
+        const nombreComponente = tr.getAttribute('data-id-componente') || '';
         if (porTienda[proveedor]) {
-            // MODIFICADO: se usa el atributo data-id-componente (id "limpio") en vez del texto de
-            // la celda, que ahora puede incluir el icono 💬 de pareja.
-            const nombreComponente = tr.getAttribute('data-id-componente') || '';
             porTienda[proveedor].items.push({ componente: nombreComponente, desglose, unidades: totalUnidades, precio: precioEstimado });
             porTienda[proveedor].subtotal += precioEstimado;
+        } else if (proveedor === 'STOCK_REAL') {
+            yaEnStock.items.push({ componente: nombreComponente, desglose, unidades: totalUnidades, precio: precioEstimado });
+            yaEnStock.subtotal += precioEstimado;
         }
     });
 
@@ -813,13 +825,17 @@ function recalcularPedido() {
         resumenDiv.innerHTML = texto;
     }
 
-    renderDesglosePorTienda(porTienda);
+    renderDesglosePorTienda(porTienda, yaEnStock);
 }
 
 // NUEVO: pinta, al final de la tabla, un bloque por cada tienda con los artículos que se
 // comprarían en ella (cantidad + precio), su subtotal, los gastos de envío fijos de esa tienda,
 // el total de esa tienda, y finalmente la suma completa del pedido (artículos + envíos).
-function renderDesglosePorTienda(porTienda) {
+// AMPLIADO (2026-09-20): segundo parámetro "yaEnStock" -- componentes con "💰 Precio real (ya en
+// stock)" seleccionado (ver recalcularPedido). Se pintan en un bloque aparte, sin gastos de envío
+// (ya los tienes, no es un pedido nuevo), pero SÍ suman al "Total del pedido" general para que
+// cuadre con el "Precio estimado" del resumen de arriba.
+function renderDesglosePorTienda(porTienda, yaEnStock) {
     const desgloseDiv = document.getElementById('pedido-desglose-tiendas');
     if (!desgloseDiv) return;
 
@@ -869,14 +885,51 @@ function renderDesglosePorTienda(porTienda) {
             </div>`;
     });
 
+    // NUEVO (2026-09-20): bloque "Ya en stock" -- no es una tienda (no hay gastos de envío, ya
+    // tienes las piezas), así que se pinta con un estilo distinto y fuera del bucle de arriba,
+    // pero su subtotal sí entra en totalGeneral para que "Total del pedido" cuadre con el
+    // "Precio estimado" del resumen.
+    if (yaEnStock && yaEnStock.items.length > 0) {
+        huboAlgunaTienda = true;
+        totalGeneral += yaEnStock.subtotal;
+
+        const filasYaEnStockHtml = yaEnStock.items.map(item => `
+            <tr>
+                <td>${item.componente}</td>
+                <td>${item.desglose}</td>
+                <td>${formatearPrecioLocal(item.precio)}€</td>
+            </tr>`).join('');
+
+        html += `
+            <div style="margin-bottom:18px; border:1px solid var(--border-color); border-radius:6px; padding:12px 15px;">
+                <h4 style="margin:0 0 10px 0; color:var(--success);">💰 Ya en stock (precio real, no es un pedido nuevo)</h4>
+                <p style="color:var(--text-secondary); font-size:12px; margin:0 0 10px 0;">Estos componentes no tienen hoy ningún proveedor con stock, pero ya los has comprado antes -- el precio es el coste medio real que ya pagaste (Stock_Almacen), no algo que vayas a pedir ahora. No lleva gastos de envío porque no es un pedido nuevo.</p>
+                <div style="overflow-x:auto;">
+                    <table>
+                        <thead><tr><th>Componente</th><th>Cantidad</th><th>Precio</th></tr></thead>
+                        <tbody>${filasYaEnStockHtml}</tbody>
+                    </table>
+                </div>
+                <div style="text-align:right; font-size:15px; font-weight:bold; margin-top:8px;">
+                    Subtotal ya en stock: ${formatearPrecioLocal(yaEnStock.subtotal)}€
+                </div>
+            </div>`;
+    }
+
     if (!huboAlgunaTienda) {
         desgloseDiv.innerHTML = '';
         return;
     }
 
+    // NUEVO (2026-09-20): la etiqueta ahora distingue si hay algo de "Ya en stock" metido en el
+    // total, para que no parezca que TODO ese importe hay que pedirlo/pagarlo hoy.
+    const etiquetaTotal = yaEnStock && yaEnStock.items.length > 0
+        ? 'Total general (pedido nuevo + lo que ya tienes en stock)'
+        : 'Total del pedido (artículos + envíos)';
+
     html += `
         <div style="text-align:right; font-size:17px; font-weight:bold; border-top:2px solid var(--border-color); padding-top:12px;">
-            Total del pedido (artículos + envíos): ${formatearPrecioLocal(totalGeneral)}€
+            ${etiquetaTotal}: ${formatearPrecioLocal(totalGeneral)}€
         </div>`;
 
     desgloseDiv.innerHTML = html;
