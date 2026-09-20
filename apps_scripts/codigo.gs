@@ -2307,6 +2307,212 @@ function ordenarVariantes(sheetVar) {
 
 /**
  * =====================================================
+ * NUEVO (2026-09-20): MONTAJE DE KITS FÍSICOS (resta stock real)
+ * =====================================================
+ * A diferencia del simulador "📦 Packs que podemos preparar" (calcularPreparablesPorKit en app.js,
+ * que NO toca nada en Sheets -- solo calcula sobre los datos ya cargados), esto SÍ descuenta de
+ * verdad de Stock_Almacen cuando el usuario monta físicamente N unidades de un kit, y lleva la
+ * cuenta de cuántos kits ya montados tiene listos para enviar (hoja "Kits_Preparados").
+ *
+ * Un mismo "hueco" de un kit (fila de Kits_Consolas) puede tener más de una pieza válida -- el
+ * componente "original" y, si existe, su sustituto registrado en la hoja "Sustituciones" (p.ej. un
+ * condensador de una marca antigua y uno nuevo de mejor calidad que ocupa el mismo hueco). Al
+ * montar un kit de verdad hace falta saber CUÁL de los dos se ha usado físicamente, porque el stock
+ * de cada uno se lleva por separado en Stock_Almacen -- de ahí el parámetro `seleccion` de
+ * montarKit(): { grupo: idComponenteElegido, ... }. Si un hueco no viene en `seleccion`, se usa su
+ * ID canónico (el original) por defecto.
+ */
+
+// Devuelve, para cada ID_Kit, un mapa { grupo: cantidadPorKit } -- "grupo" es el ID_Componente
+// original (columna B de Sustituciones) si el componente literal de Kits_Consolas tiene sustituto
+// registrado, o su propio ID si no. Mismo criterio que calcularRequisitosPorKit() en app.js (el
+// simulador de "Packs que podemos preparar"), para que el desglose que ve el usuario y lo que de
+// verdad se descuenta aquí coincidan siempre: si un kit tiene dos filas para el mismo hueco (el
+// original y su sustituto, por duplicado accidental al crear el kit), se queda con la cantidad
+// MAYOR de las dos, no con la suma -- ambas representan el mismo hueco físico.
+function obtenerRequisitosPorKitGrupo(datosKits, sustituciones) {
+  const porKit = {};
+  datosKits.forEach(function(row) {
+    const idKit = String(row['ID_Kit'] || '').trim();
+    const idComp = String(row['ID_Componente'] || '').trim();
+    const cantidad = Number(row['Cantidad']) || 0;
+    if (!idKit || !idComp || cantidad <= 0) return;
+    const grupo = sustituciones[idComp] || idComp;
+    if (!porKit[idKit]) porKit[idKit] = {};
+    if (!porKit[idKit][grupo] || cantidad > porKit[idKit][grupo]) {
+      porKit[idKit][grupo] = cantidad;
+    }
+  });
+  return porKit;
+}
+
+// Todas las piezas intercambiables para un mismo "grupo" (hueco físico): el propio ID canónico más
+// cualquier ID que lo tenga como ID_Original en la hoja Sustituciones (columna B).
+function candidatosParaGrupo(grupo, sustituciones) {
+  const candidatos = [grupo];
+  Object.keys(sustituciones).forEach(function(idNuevo) {
+    if (sustituciones[idNuevo] === grupo) candidatos.push(idNuevo);
+  });
+  return candidatos;
+}
+
+// Igual que generarIdPedido, pero para la hoja "Kits_Montados" -- genera "MONTAJE nº1", "nº2"...
+function generarIdMontaje(hojaMontajes) {
+  const ultimaFila = hojaMontajes.getLastRow();
+  return `MONTAJE nº${Math.max(ultimaFila - 1, 0) + 1}`;
+}
+
+/**
+ * NUEVO: monta físicamente `cantidad` unidades del kit `idKit` -- acción 'montar_kit' desde el
+ * botón "🛠️ Montar Kit" de la pestaña Stock Físico. A diferencia de todo el módulo de "Nuevo
+ * Pedido"/"Stock en Camino" (que trata con stock que TODAVÍA NO ha llegado), esto consume stock
+ * que YA ESTÁ físicamente en el almacén AHORA MISMO -- por eso solo mira "Uds_Disponibles", nunca
+ * "Stock_En_Camino" (una pieza que sigue en camino no se puede montar en un kit todavía).
+ *
+ * Operación atómica: si falta stock de CUALQUIER componente para completar `cantidad` unidades
+ * completas del kit, no se descuenta nada de ninguno (mejor eso que dejar unidades a medias) y se
+ * informa de qué falta y cuánto.
+ *
+ * `seleccion` (opcional) = { grupo: idComponenteElegido, ... } -- para huecos con más de una pieza
+ * válida (ver candidatosParaGrupo), indica cuál se ha usado realmente. Si un hueco no aparece aquí,
+ * se usa su ID canónico (el original) por defecto.
+ *
+ * Además de descontar Stock_Almacen hace dos cosas más: (1) suma `cantidad` a la hoja
+ * "Kits_Preparados" (ID_Kit -> Cantidad_Lista, el contador de "listos para enviar" -- se crea sola
+ * la primera vez), y (2) deja constancia en "Kits_Montados" / "Kits_Montados_Detalle" (mismo patrón
+ * que "Pedidos"/"Pedidos_Detalle") de qué se ha montado y con qué piezas exactas, para trazabilidad.
+ */
+function montarKit(idKit, cantidad, seleccion) {
+  try {
+    if (!idKit) throw new Error("Falta el ID de kit.");
+    const cantidadNum = Number(cantidad);
+    if (!isFinite(cantidadNum) || cantidadNum <= 0 || Math.floor(cantidadNum) !== cantidadNum) {
+      throw new Error("La cantidad de kits a montar debe ser un número entero mayor que 0.");
+    }
+    seleccion = seleccion || {};
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheetKits = ss.getSheetByName("Kits_Consolas");
+    const sheetStock = ss.getSheetByName("Stock_Almacen");
+    if (!sheetKits) throw new Error("No se encuentra la pestaña 'Kits_Consolas'.");
+    if (!sheetStock) throw new Error("No se encuentra la pestaña 'Stock_Almacen'.");
+
+    const datosKitsRaw = sheetKits.getDataRange().getValues();
+    const headersKits = datosKitsRaw.shift().map(function(h) { return String(h).trim(); });
+    const colIdKit = headersKits.indexOf('ID_Kit');
+    const colIdCompKit = headersKits.indexOf('ID_Componente');
+    const colCantidadKit = headersKits.indexOf('Cantidad');
+    if (colIdKit === -1 || colIdCompKit === -1 || colCantidadKit === -1) {
+      throw new Error("Faltan columnas 'ID_Kit', 'ID_Componente' o 'Cantidad' en Kits_Consolas.");
+    }
+    const idKitTrim = String(idKit).trim();
+    const datosKits = datosKitsRaw
+      .filter(function(row) { return String(row[colIdKit] || '').trim() === idKitTrim; })
+      .map(function(row) {
+        return { 'ID_Kit': row[colIdKit], 'ID_Componente': row[colIdCompKit], 'Cantidad': row[colCantidadKit] };
+      });
+    if (datosKits.length === 0) throw new Error(`El kit "${idKit}" no tiene componentes definidos en Kits_Consolas.`);
+
+    const sustituciones = cargarMapaSustituciones();
+    const requisitosPorKit = obtenerRequisitosPorKitGrupo(datosKits, sustituciones);
+    const requisitos = requisitosPorKit[idKitTrim];
+    if (!requisitos) throw new Error(`El kit "${idKit}" no tiene componentes válidos definidos en Kits_Consolas.`);
+
+    // Resuelve, para cada hueco (grupo), qué ID_Componente literal se descuenta de verdad, y
+    // valida que sea una opción real para ese hueco (para no permitir mandar cualquier ID desde
+    // fuera y descontar stock de un componente que no tiene nada que ver con este kit).
+    const necesidadesPorIdReal = {}; // idReal -> cantidad total a descontar
+    const resumenSeleccion = []; // para el mensaje/registro final
+    Object.keys(requisitos).forEach(function(grupo) {
+      const cantidadPorKit = requisitos[grupo];
+      const candidatos = candidatosParaGrupo(grupo, sustituciones);
+      const idReal = seleccion[grupo] ? String(seleccion[grupo]).trim() : grupo;
+      if (candidatos.indexOf(idReal) === -1) {
+        throw new Error(`"${idReal}" no es una pieza válida para el hueco de "${grupo}" en el kit "${idKit}".`);
+      }
+      const necesaria = redondear(cantidadPorKit * cantidadNum, 4);
+      necesidadesPorIdReal[idReal] = (necesidadesPorIdReal[idReal] || 0) + necesaria;
+      resumenSeleccion.push({ grupo: grupo, idReal: idReal, cantidadPorKit: cantidadPorKit });
+    });
+
+    // Lee Stock_Almacen UNA sola vez y valida ANTES de escribir nada (operación atómica).
+    const stockData = sheetStock.getDataRange().getValues();
+    const stockHeaders = stockData.shift().map(function(h) { return String(h).trim(); });
+    const idColIndex = stockHeaders.indexOf('ID_Componente');
+    const udsColIndex = stockHeaders.indexOf('Uds_Disponibles');
+    if (idColIndex === -1 || udsColIndex === -1) {
+      throw new Error("Faltan columnas 'ID_Componente' o 'Uds_Disponibles' en Stock_Almacen.");
+    }
+
+    const filaStockPorId = {};
+    stockData.forEach(function(row, i) {
+      const id = String(row[idColIndex] || '').trim();
+      if (id) filaStockPorId[id] = i;
+    });
+
+    const faltantes = [];
+    Object.keys(necesidadesPorIdReal).forEach(function(idReal) {
+      const necesaria = necesidadesPorIdReal[idReal];
+      const fila = filaStockPorId[idReal];
+      const disponible = fila !== undefined ? (Number(stockData[fila][udsColIndex]) || 0) : 0;
+      if (disponible < necesaria) {
+        faltantes.push(`${idReal} (necesitas ${redondear(necesaria, 2)}, disponibles ${redondear(disponible, 2)})`);
+      }
+    });
+    if (faltantes.length > 0) {
+      throw new Error(`No hay stock físico suficiente para montar ${cantidadNum} kit(s) de "${idKit}". Faltan: ${faltantes.join(' | ')}.`);
+    }
+
+    // Todo OK -- descuenta de verdad de Stock_Almacen.
+    Object.keys(necesidadesPorIdReal).forEach(function(idReal) {
+      const necesaria = necesidadesPorIdReal[idReal];
+      const fila = filaStockPorId[idReal];
+      const disponibleActual = Number(stockData[fila][udsColIndex]) || 0;
+      const nuevoDisponible = redondear(disponibleActual - necesaria, 4);
+      sheetStock.getRange(fila + 2, udsColIndex + 1).setValue(nuevoDisponible);
+    });
+
+    // Suma al contador de "listos para enviar" (hoja "Kits_Preparados", se crea sola).
+    const sheetPreparados = obtenerOCrearHoja(ss, 'Kits_Preparados', ['ID_Kit', 'Cantidad_Lista']);
+    const datosPreparados = sheetPreparados.getDataRange().getValues();
+    const headersPreparados = datosPreparados.shift().map(function(h) { return String(h).trim(); });
+    const colIdPrep = headersPreparados.indexOf('ID_Kit');
+    const colCantPrep = headersPreparados.indexOf('Cantidad_Lista');
+    let filaPreparadosIndex = -1;
+    for (let i = 0; i < datosPreparados.length; i++) {
+      if (String(datosPreparados[i][colIdPrep] || '').trim() === idKitTrim) { filaPreparadosIndex = i; break; }
+    }
+    let nuevoTotalListos;
+    if (filaPreparadosIndex !== -1) {
+      nuevoTotalListos = (Number(datosPreparados[filaPreparadosIndex][colCantPrep]) || 0) + cantidadNum;
+      sheetPreparados.getRange(filaPreparadosIndex + 2, colCantPrep + 1).setValue(nuevoTotalListos);
+    } else {
+      nuevoTotalListos = cantidadNum;
+      sheetPreparados.getRange(sheetPreparados.getLastRow() + 1, 1, 1, 2).setValues([[idKit, nuevoTotalListos]]);
+    }
+
+    // Registro de auditoría (mismo patrón que Pedidos/Pedidos_Detalle).
+    const sheetMontajes = obtenerOCrearHoja(ss, 'Kits_Montados', ['ID_Montaje', 'ID_Kit', 'Cantidad', 'Fecha']);
+    const sheetMontajesDetalle = obtenerOCrearHoja(ss, 'Kits_Montados_Detalle', ['ID_Montaje', 'ID_Componente', 'Cantidad_Descontada']);
+    const idMontaje = generarIdMontaje(sheetMontajes);
+    sheetMontajes.getRange(sheetMontajes.getLastRow() + 1, 1, 1, 4).setValues([[idMontaje, idKit, cantidadNum, new Date()]]);
+    const filasDetalle = Object.keys(necesidadesPorIdReal).map(function(idReal) {
+      return [idMontaje, idReal, redondear(necesidadesPorIdReal[idReal], 4)];
+    });
+    sheetMontajesDetalle.getRange(sheetMontajesDetalle.getLastRow() + 1, 1, filasDetalle.length, 3).setValues(filasDetalle);
+
+    const desgloseTexto = resumenSeleccion.map(function(r) {
+      return `${r.idReal} -${redondear(r.cantidadPorKit * cantidadNum, 2)}`;
+    }).join(', ');
+
+    return `✅ ${idMontaje}: montado(s) ${cantidadNum} kit(s) de "${idKit}". Descontado: ${desgloseTexto}. Ahora tienes ${nuevoTotalListos} listos para enviar de este kit.`;
+  } catch (err) {
+    throw new Error("Error al montar el kit: " + err.message);
+  }
+}
+
+/**
+ * =====================================================
  * SISTEMA WEB API (PARA GITHUB PAGES)
  * =====================================================
  */
@@ -2514,6 +2720,15 @@ function doPost(e) {
     // que llega a casa) y reparte el ajuste entre sus líneas.
     if (action === 'aplicar_aduana_pedido') {
       const msg = aplicarAduanaAPedido(payload.idPedido, payload.gastosAduana);
+      return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // NUEVO (2026-09-20): Acción para el botón "🛠️ Montar Kit" de la pestaña Stock Físico -- resta
+    // stock REAL de Stock_Almacen (a diferencia del simulador "Packs que podemos preparar", que no
+    // escribe nada) y suma al contador de "Kits_Preparados" (listos para enviar). Ver montarKit().
+    if (action === 'montar_kit') {
+      const msg = montarKit(payload.idKit, payload.cantidad, payload.seleccion);
       return ContentService.createTextOutput(JSON.stringify({"status": "success", "message": msg}))
         .setMimeType(ContentService.MimeType.JSON);
     }
