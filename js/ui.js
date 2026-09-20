@@ -440,7 +440,153 @@ function renderStockAlmacen(container, datos, extra) {
         packsHtml = renderPacksPreparables(extra.preparables);
     }
 
-    container.innerHTML = toolbarHtml + tablaHtml + aplicarRecibidosHtml + packsHtml;
+    // NUEVO (2026-09-20): "🛠️ Montar Kit" (construcción REAL, resta stock de verdad) y, debajo,
+    // "📬 Kits listos para enviar" (el contador de lo que ya se ha montado) -- extra.montarKit lo
+    // trae ya calculado desde app.js (cargarVista/recalcularYRenderizarStock), igual que
+    // extra.preparables para el simulador de arriba. Ver comentario en renderMontarKit sobre en
+    // qué se diferencia esto de "📦 Packs que podemos preparar".
+    let montarKitHtml = '';
+    let kitsListosHtml = '';
+    if (extra && extra.montarKit) {
+        montarKitHtml = renderMontarKit(extra.montarKit);
+        kitsListosHtml = renderKitsListos(extra.montarKit.kitsListos, extra.montarKit.nombreConsolaPorKit);
+    }
+
+    container.innerHTML = toolbarHtml + tablaHtml + aplicarRecibidosHtml + packsHtml + montarKitHtml + kitsListosHtml;
+}
+
+// NUEVO (2026-09-20): sección "🛠️ Montar Kit" -- a diferencia de "📦 Packs que podemos preparar"
+// (arriba, PURA SIMULACIÓN, nunca escribe nada), esto monta de verdad `cantidad` unidades físicas
+// de un kit: al pulsar "🛠️ Montar" (manejador en app.js) se llama a la acción 'montar_kit'
+// (Codigo.gs -> montarKit()), que resta de verdad Stock_Almacen (SOLO Uds_Disponibles -- una pieza
+// "en camino" no sirve para montar algo hoy) y suma el resultado a la hoja "Kits_Preparados" (ver
+// renderKitsListos). extraMontaje = { requisitosPorKit, nombreConsolaPorKit, stockDisponibleFisico,
+// kitsListos } -- requisitosPorKit y nombreConsolaPorKit son LOS MISMOS objetos que ya calcula
+// app.js para "Packs que podemos preparar" (misma agrupación grupo/sustitutos, ver
+// calcularRequisitosPorKit), reutilizados tal cual para no duplicar esa lógica.
+function renderMontarKit(extraMontaje) {
+    const requisitosPorKit = extraMontaje.requisitosPorKit || {};
+    const nombreConsolaPorKit = extraMontaje.nombreConsolaPorKit || {};
+    const idsKits = Object.keys(requisitosPorKit).filter(k => requisitosPorKit[k] && requisitosPorKit[k].length > 0);
+    if (idsKits.length === 0) return '';
+
+    idsKits.sort((a, b) => {
+        const familiaA = nombreConsolaPorKit[a] || '';
+        const familiaB = nombreConsolaPorKit[b] || '';
+        const cmpFamilia = familiaA.localeCompare(familiaB, 'es', { sensitivity: 'base' });
+        if (cmpFamilia !== 0) return cmpFamilia;
+        return String(a).localeCompare(String(b), 'es', { sensitivity: 'base' });
+    });
+
+    const opcionesHtml = idsKits.map(idKit => {
+        const consola = nombreConsolaPorKit[idKit] || '';
+        return `<option value="${escaparAttrStock(idKit)}">${escaparAttrStock(idKit)}${consola ? ' — ' + escaparAttrStock(consola) : ''}</option>`;
+    }).join('');
+
+    // Desglose inicial: el primer kit de la lista, 1 unidad, sin ninguna variante elegida todavía
+    // (usa el ID canónico de cada hueco por defecto) -- igual que hace app.js al restaurar la
+    // selección tras un repintado (ver recalcularDetalleMontarKit).
+    const primerKit = idsKits[0];
+    const detalleInicialHtml = renderDetalleMontarKit(primerKit, 1, requisitosPorKit[primerKit], extraMontaje.stockDisponibleFisico || {}, {});
+
+    return `
+        <div class="packs-section">
+            <h3>🛠️ Montar Kit</h3>
+            <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Elige un kit y cuántas unidades vas a montar AHORA con piezas físicas que ya tienes en el almacén. A diferencia de "📦 Packs que podemos preparar" de arriba (solo una simulación, no toca nada), al pulsar "🛠️ Montar" esto SÍ resta de verdad esas unidades de Stock Físico y suma el resultado a "📬 Kits listos para enviar" (justo debajo). Si un componente tiene más de una pieza válida (sustitutos), elige cuál has usado realmente para montarlo -- por defecto se usa la pieza original.</p>
+            <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:10px;">
+                <div>
+                    <label for="select-montar-kit" style="display:block; font-size:12px; color:var(--text-secondary); margin-bottom:4px;">Kit</label>
+                    <select id="select-montar-kit" style="padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--border-color); border-radius:4px; min-width:220px;">${opcionesHtml}</select>
+                </div>
+                <div>
+                    <label for="input-cantidad-montar-kit" style="display:block; font-size:12px; color:var(--text-secondary); margin-bottom:4px;">Unidades a montar</label>
+                    <input type="number" id="input-cantidad-montar-kit" min="1" step="1" value="1" style="padding:6px; width:100px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--border-color); border-radius:4px;">
+                </div>
+                <button id="btn-montar-kit" class="btn" style="background: var(--success);">🛠️ Montar</button>
+            </div>
+            <div id="detalle-montar-kit">${detalleInicialHtml}</div>
+            <div id="msg-montar-kit" style="margin-top:8px; font-size:13px;"></div>
+        </div>`;
+}
+
+// Desglose de componentes del kit elegido en "Montar Kit": por cada hueco (grupo) cuánto hace
+// falta para la cantidad puesta y, si tiene más de una pieza física válida (r.sustitutos, ya
+// calculado en app.js -- mismo criterio que en "Packs que podemos preparar"), un <select> para
+// elegir cuál se ha usado de verdad. En rojo si el stock físico DISPONIBLE (Uds_Disponibles, nunca
+// Stock_En_Camino -- ver stockDisponibleFisico) de la pieza elegida no llega para esa cantidad.
+// Exportada porque app.js la vuelve a llamar (sin repintar toda la pestaña) cada vez que cambia el
+// kit, la cantidad o la variante elegida -- ver recalcularDetalleMontarKit en app.js.
+export function renderDetalleMontarKit(idKit, cantidad, requisitos, stockDisponibleFisico, seleccionActual) {
+    if (!requisitos || requisitos.length === 0) {
+        return '<p style="color:var(--text-secondary); font-size:12px;">Este kit no tiene componentes definidos en Kits_Consolas.</p>';
+    }
+    seleccionActual = seleccionActual || {};
+    stockDisponibleFisico = stockDisponibleFisico || {};
+    const cantidadNum = Math.max(1, parseInt(cantidad, 10) || 1);
+
+    const filas = requisitos.map(r => {
+        const candidatos = [r.grupo, ...(r.sustitutos || [])];
+        const elegido = (seleccionActual[r.grupo] && candidatos.includes(seleccionActual[r.grupo])) ? seleccionActual[r.grupo] : r.grupo;
+        const necesaria = r.cantidad * cantidadNum;
+        const disponibleElegido = stockDisponibleFisico[elegido] || 0;
+        const falta = disponibleElegido < necesaria;
+        const color = falta ? 'color:var(--danger); font-weight:bold;' : 'color:var(--text-secondary);';
+
+        let piezaHtml;
+        if (candidatos.length > 1) {
+            const opciones = candidatos.map(c => {
+                const disp = stockDisponibleFisico[c] || 0;
+                return `<option value="${escaparAttrStock(c)}" ${c === elegido ? 'selected' : ''}>${escaparAttrStock(c)} (disp. física ${formatearCantidadStock(disp)})</option>`;
+            }).join('');
+            piezaHtml = `<select class="select-montar-variante" data-grupo="${escaparAttrStock(r.grupo)}" style="padding:3px; font-size:11px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--border-color); border-radius:4px;">${opciones}</select>`;
+        } else {
+            piezaHtml = `<span>${escaparAttrStock(elegido)}</span>`;
+        }
+
+        const textoEstado = falta
+            ? `⚠️ faltan ${formatearCantidadStock(necesaria - disponibleElegido)} uds`
+            : `(disponibles ${formatearCantidadStock(disponibleElegido)})`;
+
+        return `<div style="${color} margin-bottom:4px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">${piezaHtml}<span>necesita ${formatearCantidadStock(necesaria)} uds ${textoEstado}</span></div>`;
+    }).join('');
+
+    return `<div style="margin-top:10px; padding:10px; border:1px solid var(--border-color); border-radius:6px; font-size:12px;">${filas}</div>`;
+}
+
+// NUEVO (2026-09-20): tabla "📬 Kits listos para enviar" -- el contador REAL (hoja Kits_Preparados,
+// leída vía JSONP igual que "Pedidos", ver obtenerDatosViaAppsScript en api.js) de cuántas
+// unidades COMPLETAS de cada kit hay YA montadas físicamente, sumado cada vez que se usa "🛠️
+// Montar Kit" arriba. No confundir con "Preparables ahora" de "📦 Packs que podemos preparar":
+// aquello es cuánto SE PODRÍA montar con el stock actual, esto es cuánto YA ESTÁ montado de verdad.
+function renderKitsListos(kitsListos, nombreConsolaPorKit) {
+    const idsKits = Object.keys(kitsListos || {}).filter(k => (kitsListos[k] || 0) > 0);
+    if (idsKits.length === 0) return '';
+
+    idsKits.sort((a, b) => {
+        const familiaA = (nombreConsolaPorKit || {})[a] || '';
+        const familiaB = (nombreConsolaPorKit || {})[b] || '';
+        const cmpFamilia = familiaA.localeCompare(familiaB, 'es', { sensitivity: 'base' });
+        if (cmpFamilia !== 0) return cmpFamilia;
+        return String(a).localeCompare(String(b), 'es', { sensitivity: 'base' });
+    });
+
+    const filasHtml = idsKits.map(idKit => `<tr>
+        <td>${escaparAttrStock(idKit)}</td>
+        <td>${escaparAttrStock((nombreConsolaPorKit || {})[idKit] || '')}</td>
+        <td style="font-weight:bold;">${formatearCantidadStock(kitsListos[idKit])}</td>
+    </tr>`).join('');
+
+    return `
+        <div class="packs-section">
+            <h3>📬 Kits listos para enviar</h3>
+            <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">Unidades ya montadas físicamente con "🛠️ Montar Kit" (arriba) y listas para enviar.</p>
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead><tr><th>Kit</th><th>Consola</th><th>Listos para enviar</th></tr></thead>
+                    <tbody>${filasHtml}</tbody>
+                </table>
+            </div>
+        </div>`;
 }
 
 // NUEVO (2026-09-09): sección "📦 Packs que podemos preparar" -- una fila por kit con cuántas

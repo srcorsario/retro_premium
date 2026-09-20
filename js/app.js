@@ -1,7 +1,7 @@
 // js/app.js
 import ENV from './config.js';
-import { obtenerDatos } from './api.js';
-import { renderTabla, mostrarMensaje } from './ui.js';
+import { obtenerDatos, actualizarDatos, obtenerDatosViaAppsScript } from './api.js';
+import { renderTabla, mostrarMensaje, renderDetalleMontarKit } from './ui.js';
 import { inicializarModuloPedidos } from './pedidos.js';
 import { inicializarModuloPedido, ORDEN_PRESELECCION, totalGastosEnvio } from './pedido.js'; // NUEVO: generador de pedido
 
@@ -372,6 +372,38 @@ let reservasPorKit = {};
 // cacheKitsBase/recalcularYRenderizarKits).
 let cacheStockBase = null;
 
+// NUEVO (2026-09-20): "🛠️ Montar Kit" -- construcción REAL de kits (a diferencia de "Packs que
+// podemos preparar" de arriba, que es solo una simulación y nunca escribe nada). cacheMontarKit
+// guarda los mismos requisitosPorKit/nombreConsolaPorKit que cacheStockBase (se recalculan juntos
+// en cargarVista, no hace falta pedirlos dos veces) más stockDisponibleFisico (SOLO
+// Uds_Disponibles, nunca Stock_En_Camino -- una pieza en camino no sirve para montar algo hoy) y
+// kitsListos (hoja "Kits_Preparados", el contador de lo ya montado). seleccionMontarKit guarda qué
+// pieza concreta (original o sustituto) se ha elegido para cada hueco del kit ACTUALMENTE elegido
+// en el select -- se resetea al cambiar de kit, porque los huecos de un kit no tienen nada que ver
+// con los del anterior. kitMontarActual/cantidadMontarActual se guardan aparte solo para poder
+// restaurar la selección del usuario si el simulador de "Packs" de arriba fuerza un repintado de
+// toda la pestaña (ver recalcularYRenderizarStock) mientras estaba con esto a medias.
+let cacheMontarKit = null;
+let seleccionMontarKit = {};
+let kitMontarActual = null;
+let cantidadMontarActual = 1;
+
+// Recalcula solo el desglose de "🛠️ Montar Kit" (no repinta toda la pestaña) -- se llama al
+// cambiar el kit elegido, la cantidad, o la variante de un hueco con sustituto.
+function recalcularDetalleMontarKit() {
+    if (!cacheMontarKit) return;
+    const select = document.getElementById('select-montar-kit');
+    const inputCantidad = document.getElementById('input-cantidad-montar-kit');
+    const contenedor = document.getElementById('detalle-montar-kit');
+    if (!select || !inputCantidad || !contenedor) return;
+    const idKit = select.value;
+    kitMontarActual = idKit;
+    const cantidad = Math.max(1, parseInt(inputCantidad.value, 10) || 1);
+    cantidadMontarActual = cantidad;
+    const requisitos = cacheMontarKit.requisitosPorKit[idKit] || [];
+    contenedor.innerHTML = renderDetalleMontarKit(idKit, cantidad, requisitos, cacheMontarKit.stockDisponibleFisico, seleccionMontarKit);
+}
+
 // Las hojas de Google Sheets guardan los números con coma decimal -- reutilizamos el mismo
 // helper que ya usa el resto de app.js (parseNumeroES) para leer Uds_Disponibles/Stock_En_Camino.
 
@@ -411,6 +443,20 @@ function construirStockPorIdLiteral(datosStock) {
         const disponible = parseNumeroES(row['Uds_Disponibles']);
         const enCamino = parseNumeroES(row['Stock_En_Camino']);
         stockPorId[id] = (stockPorId[id] || 0) + disponible + enCamino;
+    });
+    return stockPorId;
+}
+
+// NUEVO (2026-09-20): stock FÍSICO por ID literal -- igual que construirStockPorIdLiteral() de
+// arriba pero SIN sumar Stock_En_Camino, porque para "🛠️ Montar Kit" (construcción real, no
+// simulación) solo cuenta lo que ya está en el almacén AHORA MISMO. Usado para decidir si hay
+// stock suficiente al elegir una pieza concreta (candidata) para cada hueco del kit.
+function construirStockDisponibleFisico(datosStock) {
+    const stockPorId = {};
+    (datosStock || []).forEach(row => {
+        const id = (row['ID_Componente'] || '').trim();
+        if (!id) return;
+        stockPorId[id] = (stockPorId[id] || 0) + parseNumeroES(row['Uds_Disponibles']);
     });
     return stockPorId;
 }
@@ -755,9 +801,24 @@ function recalcularYRenderizarStock() {
             porKit: preparables,
             nombreConsolaPorKit: cacheStockBase.nombreConsolaPorKit
         },
-        valorPorIdComponente: cacheStockBase.valorPorIdComponente
+        valorPorIdComponente: cacheStockBase.valorPorIdComponente,
+        montarKit: cacheMontarKit
     };
     renderTabla('contenedor-tabla', cacheStockBase.datosStock, 'Stock_Almacen', extra);
+
+    // NUEVO (2026-09-20): este repintado lo dispara el simulador de "Packs" (reserva/optimizar/
+    // reiniciar) y regenera "🛠️ Montar Kit" desde cero (vuelve al primer kit y 1 unidad, ver
+    // renderMontarKit en ui.js) -- si el usuario ya tenía un kit/cantidad/variante elegidos ahí, se
+    // restauran para no perder lo que estaba mirando mientras tocaba el simulador.
+    if (cacheMontarKit && kitMontarActual) {
+        const select = document.getElementById('select-montar-kit');
+        const inputCantidad = document.getElementById('input-cantidad-montar-kit');
+        if (select && Array.from(select.options).some(o => o.value === kitMontarActual)) {
+            select.value = kitMontarActual;
+        }
+        if (inputCantidad) inputCantidad.value = cantidadMontarActual;
+        recalcularDetalleMontarKit();
+    }
 }
 
 // NUEVO: Orden de proveedor para que, dentro de un mismo ID_Componente, salgan siempre en el mismo orden
@@ -872,12 +933,42 @@ async function cargarVista(nombrePestana) {
         });
 
         cacheStockBase = { datosStock: datos, requisitosPorKit, stockPorGrupo, nombreConsolaPorKit, valorPorIdComponente };
+
+        // NUEVO (2026-09-20): datos para "🛠️ Montar Kit" -- reutiliza requisitosPorKit/
+        // nombreConsolaPorKit (ya calculados arriba para "Packs que podemos preparar", misma
+        // agrupación grupo/sustitutos) y añade lo que le falta: stock FÍSICO por ID literal (solo
+        // Uds_Disponibles, ver construirStockDisponibleFisico) y la hoja "Kits_Preparados" (cuánto
+        // hay YA montado de cada kit -- se lee vía JSONP porque no tiene gid en config.js, igual
+        // que "Pedidos"; si la hoja todavía no existe -- no se ha montado nada nunca -- doGet
+        // devuelve un error y obtenerDatosViaAppsScript ya lo convierte en un array vacío).
+        const stockDisponibleFisico = construirStockDisponibleFisico(datos);
+        let datosKitsPreparados = [];
+        try {
+            datosKitsPreparados = await obtenerDatosViaAppsScript('Kits_Preparados');
+        } catch (err) {
+            datosKitsPreparados = [];
+        }
+        const kitsListos = {};
+        (datosKitsPreparados || []).forEach(row => {
+            const idKit = String(row['ID_Kit'] || '').trim();
+            if (!idKit) return;
+            kitsListos[idKit] = (kitsListos[idKit] || 0) + (parseFloat(String(row['Cantidad_Lista'] || '0').replace(',', '.')) || 0);
+        });
+
+        cacheMontarKit = { requisitosPorKit, nombreConsolaPorKit, stockDisponibleFisico, kitsListos };
+        // Recarga completa de la pestaña -- se descarta cualquier selección de variante de una
+        // visita anterior (los huecos/kits pueden haber cambiado en Google Sheets mientras tanto).
+        seleccionMontarKit = {};
+        kitMontarActual = null;
+        cantidadMontarActual = 1;
+
         extra = {
             preparables: {
                 porKit: calcularPreparablesPorKit(requisitosPorKit, stockPorGrupo, reservasPorKit),
                 nombreConsolaPorKit
             },
-            valorPorIdComponente
+            valorPorIdComponente,
+            montarKit: cacheMontarKit
         };
     }
 
@@ -995,6 +1086,72 @@ document.addEventListener('DOMContentLoaded', () => {
                 mostrarMensaje('msg-pedidos', `⚙️ Reparto óptimo calculado: <strong>${resultado.total} packs combinados en total</strong> (repartidos entre kits para aprovechar al máximo el stock compartido). Puedes ajustar cualquier kit a mano si prefieres otro reparto.`, false);
             } catch (err) {
                 mostrarMensaje('msg-pedidos', '❌ No se ha podido calcular el reparto óptimo: ' + err.message, true);
+            }
+        }
+    });
+
+    // NUEVO (2026-09-20): "🛠️ Montar Kit" (pestaña Stock Físico) -- al cambiar el kit elegido se
+    // descarta la selección de variantes que hubiera (los huecos de un kit no tienen nada que ver
+    // con los del anterior) y se repinta solo el desglose de componentes (no toda la pestaña).
+    document.addEventListener('change', (e) => {
+        if (e.target && e.target.id === 'select-montar-kit') {
+            seleccionMontarKit = {};
+            recalcularDetalleMontarKit();
+        }
+    });
+
+    // Cambiar la cantidad de unidades a montar recalcula cuánto hace falta de cada componente,
+    // manteniendo la variante ya elegida en cada hueco (si había alguna).
+    document.addEventListener('input', (e) => {
+        if (e.target && e.target.id === 'input-cantidad-montar-kit') {
+            recalcularDetalleMontarKit();
+        }
+    });
+
+    // Elegir qué pieza concreta (original o sustituto) se ha usado físicamente en un hueco con más
+    // de una opción válida -- se guarda en seleccionMontarKit y es lo que se manda al backend al
+    // pulsar "🛠️ Montar" (ver más abajo).
+    document.addEventListener('change', (e) => {
+        if (e.target && e.target.classList && e.target.classList.contains('select-montar-variante')) {
+            const grupo = e.target.getAttribute('data-grupo');
+            if (grupo) seleccionMontarKit[grupo] = e.target.value;
+            recalcularDetalleMontarKit();
+        }
+    });
+
+    // NUEVO: botón "🛠️ Montar" -- a diferencia de TODO el simulador de arriba (que no escribe
+    // nada), esto SÍ resta de verdad Stock_Almacen y suma "Kits_Preparados" (ver montarKit() en
+    // Codigo.gs, acción 'montar_kit'). Mismo patrón de confirmación + recarga que el resto de
+    // acciones que ya escriben stock real en esta pestaña (p.ej. "✅ Aplicar Recibidos", "🛃
+    // Aplicar Aduanas").
+    document.addEventListener('click', async (e) => {
+        if (e.target.closest('#btn-montar-kit')) {
+            const select = document.getElementById('select-montar-kit');
+            const inputCantidad = document.getElementById('input-cantidad-montar-kit');
+            if (!select || !inputCantidad) return;
+
+            const idKit = select.value;
+            const cantidad = parseInt(inputCantidad.value, 10);
+            if (!idKit) { mostrarMensaje('msg-montar-kit', '❌ Elige un kit.', true); return; }
+            if (isNaN(cantidad) || cantidad <= 0) { mostrarMensaje('msg-montar-kit', '❌ Indica una cantidad de kits a montar mayor que 0.', true); return; }
+
+            mostrarMensaje('msg-montar-kit', '🔄 Montando kit y actualizando el stock en Google Sheets...', false);
+
+            const exito = await actualizarDatos({
+                action: 'montar_kit',
+                idKit,
+                cantidad,
+                seleccion: seleccionMontarKit
+            });
+
+            if (exito) {
+                if (confirm(`✅ Kit "${idKit}" montado (${cantidad} ud.).\n\nSe ha descontado el stock físico usado en Stock_Almacen y sumado al contador de "listos para enviar".\n\nOJO: si no había stock físico suficiente de algún componente, Google Sheets no habrá descontado nada (operación atómica) -- refresca para comprobar si de verdad se ha montado.\n\nPulsa Aceptar para refrescar la web y ver los cambios.`)) {
+                    location.reload();
+                } else {
+                    mostrarMensaje('msg-montar-kit', `✅ Petición enviada para montar "${idKit}". Refresca la web cuando quieras para ver el stock actualizado.`, false);
+                }
+            } else {
+                mostrarMensaje('msg-montar-kit', '❌ Error al montar el kit en Google Sheets.', true);
             }
         }
     });
