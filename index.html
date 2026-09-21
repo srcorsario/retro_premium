@@ -80,7 +80,17 @@
                     <p style="color:var(--text-secondary); font-size:13px;">Cargando kits...</p>
                 </div>
 
-                <button id="btn-calcular-pedido" class="btn" style="background: var(--primary);">Calcular Pedido</button>
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <button id="btn-calcular-pedido" class="btn" style="background: var(--primary);">Calcular Pedido</button>
+                    <span style="color:var(--text-secondary); font-size:13px;">— o —</span>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text-secondary);">
+                        🎯 Presupuesto máx.
+                        <input type="number" id="pedido-presupuesto" min="0" step="1" placeholder="200"
+                            title="Importe máximo que quieres gastar en este pedido. Al pulsar el botón de la derecha, se calcula automáticamente cuántas unidades de cada kit pedir (o si eliminar alguno) para no pasarte."
+                            style="width:80px; padding:8px 6px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px;">€
+                    </label>
+                    <button id="btn-ajustar-presupuesto" class="btn" style="background: var(--success);">🎯 Ajustar automáticamente al presupuesto</button>
+                </div>
 
                 <div id="pedido-resultado" style="margin-top:20px;"></div>
             </div>

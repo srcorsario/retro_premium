@@ -16,6 +16,10 @@ import { obtenerDatos } from './api.js';
 let pedidoInicializado = false;
 let cacheDatosPedido = null; // se recalcula solo una vez por carga de página
 
+// NUEVO (2026-09-21): clave de localStorage para recordar el último presupuesto usado en
+// "🎯 Ajustar automáticamente al presupuesto" -- mismo patrón que retro_premium_kits_tamano_lote.
+const LS_PRESUPUESTO = 'retro_premium_presupuesto_pedido';
+
 const ORDEN_PROVEEDORES = ['LCSC', 'ALIEXPRESS', 'TME'];
 const ETIQUETA_PROVEEDOR = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME' };
 
@@ -86,6 +90,18 @@ export async function inicializarModuloPedido() {
     }
 
     btnCalcular.addEventListener('click', calcularPedido);
+
+    // NUEVO (2026-09-21): "🎯 Ajustar automáticamente al presupuesto" -- lee/guarda el importe en
+    // localStorage (para no tener que reescribirlo cada vez) y lanza ajustarAPresupuesto().
+    const inputPresupuesto = document.getElementById('pedido-presupuesto');
+    const btnAjustar = document.getElementById('btn-ajustar-presupuesto');
+    if (inputPresupuesto) {
+        try {
+            const guardado = localStorage.getItem(LS_PRESUPUESTO);
+            if (guardado) inputPresupuesto.value = guardado;
+        } catch (e) { /* localStorage puede fallar (modo privado, cuota) -- no es crítico */ }
+    }
+    if (btnAjustar) btnAjustar.addEventListener('click', ajustarAPresupuesto);
 
     pedidoInicializado = true;
 }
@@ -357,7 +373,26 @@ async function calcularPedido() {
         return;
     }
 
-    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo);
+    // NUEVO (2026-09-21): qué kits (de los seleccionados) usan cada componente y cuánto por kit --
+    // a petición del usuario, para que se vea de un vistazo si reducir/quitar la cantidad de un
+    // componente concreto afecta solo a un kit o a varios (componente compartido). Se muestra en
+    // la propia fila de la tabla (ver renderTablaPedido) y también es la base del ajuste automático
+    // de presupuesto (ver buscarAjustePresupuesto), que por eso solo quita KITS ENTEROS y nunca deja
+    // un componente compartido a media asta sin que se sepa a qué kits perjudica.
+    const usoPorComponente = {};
+    seleccion.forEach(({ idKit }) => {
+        kits
+            .filter(row => row['ID_Kit'] === idKit)
+            .forEach(row => {
+                const idComp = (row['ID_Componente'] || '').trim();
+                const cantidadPorKit = parseFloat(row['Cantidad']) || 0;
+                if (!idComp || cantidadPorKit <= 0) return;
+                if (!usoPorComponente[idComp]) usoPorComponente[idComp] = [];
+                usoPorComponente[idComp].push({ idKit, cantidadPorKit });
+            });
+    });
+
+    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente);
 }
 
 // NUEVO: el "grupo" de un ID_Componente literal es el ID original si tiene un sustituto
@@ -365,6 +400,339 @@ async function calcularPedido() {
 // cargarDatosPedido() para agrupar filasPorGrupo, ahora reutilizada aquí para detectar parejas.
 function grupoDe(idComp, sustitucionesMap) {
     return sustitucionesMap[idComp] || idComp;
+}
+
+// ============================================================================================
+// NUEVO (2026-09-21): "🎯 Ajustar automáticamente al presupuesto".
+//
+// El usuario probó a pedir un poco de cada kit y el total se disparó muy por encima de lo que
+// quiere gastar. Pidió una forma de fijar un presupuesto máximo y que la web le sugiera cómo
+// bajar a ese importe, bajando cantidades o quitando algún kit del pedido -- avisando de que como
+// muchos componentes se COMPARTEN entre kits, no pedir uno afecta a ese kit o a varios a la vez.
+//
+// DECISIÓN DE DISEÑO: el ajuste automático solo reduce/quita KITS ENTEROS (unidad a unidad), nunca
+// recorta la cantidad de un componente por su cuenta. Motivo: la única cantidad de un componente
+// que tiene sentido pedir es la que hace falta para completar los kits que se van a montar -- pedir
+// menos que eso dentro de un mismo componente no ahorra nada útil si igualmente hay que comprar el
+// resto de piezas de esos kits (te quedarías con kits a medias, no con menos gasto real por kit
+// completo). Reduciendo unidad a unidad de kit sí es una decisión coherente: cada unidad que se
+// quita dejará de pedirse en TODOS los componentes que necesitaba, incluidos los compartidos con
+// otros kits (el ahorro real de esa unidad, una vez recalculados los tramos de precio), y nunca dos
+// versiones del optimizador quedan inconsistentes con la tabla real porque usa el mismo
+// calcularMejorCompra/ORDEN_PRESELECCION que la tabla. Si el usuario prefiere en cambio recortar la
+// cantidad de un componente concreto (asumiendo que un kit se complete más adelante con otro
+// pedido), puede seguir haciéndolo a mano en "Cantidad a pedir" -- para eso está la columna "Usado
+// en" de cada fila (ver renderTablaPedido), que avisa de a qué kits afecta.
+// ============================================================================================
+
+// Simula el precio total de un pedido para un vector de cantidades por kit (sin tocar el DOM ni
+// depender de lo que haya seleccionado el usuario en la tabla) -- misma lógica de agrupación,
+// preselección de proveedor (ORDEN_PRESELECCION) y cálculo por tramos (calcularMejorCompra) que usa
+// la tabla real, para que el resultado del optimizador sea coherente con lo que luego se vería al
+// pulsar "Calcular Pedido" con ese mismo vector de cantidades.
+function simularCoste(seleccionKits, datosPedido) {
+    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo } = datosPedido;
+
+    const necesidades = {};
+    seleccionKits.forEach(({ idKit, cantidad }) => {
+        if (cantidad <= 0) return;
+        kits
+            .filter(row => row['ID_Kit'] === idKit)
+            .forEach(row => {
+                const idComp = (row['ID_Componente'] || '').trim();
+                const cantidadPorKit = parseFloat(row['Cantidad']) || 0;
+                if (!idComp || cantidadPorKit <= 0) return;
+                necesidades[idComp] = (necesidades[idComp] || 0) + (cantidadPorKit * cantidad);
+            });
+    });
+
+    const idsNecesarios = Object.keys(necesidades);
+    if (idsNecesarios.length === 0) return { total: 0, porTienda: {} };
+
+    // Mismo orden que renderTablaPedido -- no afecta al total, pero sí a qué fila de una pareja
+    // (componente + sustituto) se marca primero como "la comprada" (ver preseleccionadoPorGrupo).
+    idsNecesarios.sort((a, b) => {
+        const grupoA = grupoDe(a, sustitucionesMap);
+        const grupoB = grupoDe(b, sustitucionesMap);
+        if (grupoA !== grupoB) return grupoA.localeCompare(grupoB, 'es', { sensitivity: 'base' });
+        return a.localeCompare(b, 'es', { sensitivity: 'base' });
+    });
+
+    const preseleccionadoPorGrupo = {};
+    const porTienda = {}; // proveedor -> subtotal artículos (sin envío todavía)
+    let subtotalStockReal = 0;
+
+    idsNecesarios.forEach(idComp => {
+        const grupo = grupoDe(idComp, sustitucionesMap);
+        if (preseleccionadoPorGrupo[grupo]) return; // ya cubierto por su pareja en este grupo
+
+        const cantidadNecesaria = necesidades[idComp];
+        const stockDisponible = stockPorId[idComp] || 0;
+        const cantidadPedida = Math.max(0, cantidadNecesaria - stockDisponible);
+
+        if (cantidadPedida <= 0) {
+            preseleccionadoPorGrupo[grupo] = true; // cubierto con stock, no hace falta pedir nada
+            return;
+        }
+
+        const opciones = filasPorGrupo[grupo] || [];
+        const opcionesConDatos = opciones.map(opt => {
+            const tiers = (tiersPorProveedor[opt.proveedor] && tiersPorProveedor[opt.proveedor][opt.literalId]) || [];
+            const compra = calcularMejorCompra(tiers, cantidadPedida);
+            const hayStock = tiers.some(t => t.stockPacks > 0);
+            return Object.assign({}, opt, { compra, hayStock });
+        });
+        const precioReal = (precioRealPorGrupo || {})[grupo] || 0;
+        if (precioReal > 0) {
+            opcionesConDatos.push({
+                literalId: idComp, proveedor: 'STOCK_REAL',
+                compra: compraConPrecioReal(precioReal, cantidadPedida), hayStock: true
+            });
+        }
+
+        // Misma preselección que la tabla real: TME primero si cubre, si no cae a LCSC/AliExpress.
+        let elegido = null;
+        for (const proveedorPref of ORDEN_PRESELECCION) {
+            const candidata = opcionesConDatos.find(o => o.proveedor === proveedorPref);
+            if (candidata && candidata.hayStock && candidata.compra.desglose.length > 0 && candidata.compra.logrado) {
+                elegido = candidata;
+                break;
+            }
+        }
+        if (!elegido) {
+            // Ningún proveedor preferente cubre la cantidad completa -- como en la tabla real, el
+            // usuario tendría que elegir a mano entre lo que sí hay; para la simulación se toma la
+            // opción real más barata que sí logre cubrirla, o si ninguna cubre del todo, el precio
+            // real de stock si existe (igual que hace la tabla al preseleccionar).
+            const logrados = opcionesConDatos.filter(o => o.proveedor !== 'STOCK_REAL' && o.hayStock && o.compra.desglose.length > 0 && o.compra.logrado);
+            if (logrados.length > 0) {
+                elegido = logrados.sort((a, b) => a.compra.totalPrecio - b.compra.totalPrecio)[0];
+            } else {
+                const candidataReal = opcionesConDatos.find(o => o.proveedor === 'STOCK_REAL');
+                if (candidataReal && candidataReal.compra.totalUnidades > 0 && candidataReal.compra.logrado) {
+                    elegido = candidataReal;
+                }
+            }
+        }
+
+        preseleccionadoPorGrupo[grupo] = true;
+        if (!elegido) return; // sin ninguna opción viable -- no aporta coste (ni se puede comprar)
+
+        if (elegido.proveedor === 'STOCK_REAL') {
+            subtotalStockReal += elegido.compra.totalPrecio;
+        } else {
+            porTienda[elegido.proveedor] = (porTienda[elegido.proveedor] || 0) + elegido.compra.totalPrecio;
+        }
+    });
+
+    let total = subtotalStockReal;
+    Object.keys(porTienda).forEach(proveedor => {
+        total += porTienda[proveedor] + totalGastosEnvio(proveedor);
+    });
+
+    return { total, porTienda };
+}
+
+// Busca, mediante un algoritmo voraz (greedy), cuántas unidades de cada kit mantener para que el
+// total quede por debajo (o igual) del presupuesto: en cada paso prueba a quitar 1 unidad de cada
+// kit que todavía tenga alguna, recalcula el total resultante con simularCoste() y se queda con la
+// que más ahorre en términos reales (no un cálculo aproximado -- la simulación completa, con sus
+// tramos de precio y gastos de envío por tienda). Repite hasta entrar en presupuesto o quedarse sin
+// kits que quitar. En empates (ahorro igual, con un margen de 1 céntimo), prefiere quitar del kit
+// que todavía tenga MÁS unidades pedidas -- así, si hay que elegir, reparte el recorte en vez de
+// dejar a cero un kit del que solo se pedía 1 unidad mientras otro con 5 se queda intacto.
+function buscarAjustePresupuesto(seleccionOriginal, presupuesto, datosPedido) {
+    const actual = seleccionOriginal.map(k => Object.assign({}, k));
+    const pasos = [];
+
+    let resultado = simularCoste(actual, datosPedido);
+    if (resultado.total <= presupuesto) {
+        return { logrado: true, seleccionFinal: actual, totalFinal: resultado.total, pasos };
+    }
+
+    let unidadesRestantes = actual.reduce((suma, k) => suma + k.cantidad, 0);
+    let iteraciones = 0;
+    const LIMITE_ITERACIONES = 2000; // red de seguridad -- de sobra para cualquier pedido real
+
+    while (resultado.total > presupuesto && unidadesRestantes > 0 && iteraciones < LIMITE_ITERACIONES) {
+        iteraciones++;
+
+        let mejorIndice = -1;
+        let mejorAhorro = -Infinity;
+        let mejorResultado = null;
+
+        for (let i = 0; i < actual.length; i++) {
+            if (actual[i].cantidad <= 0) continue;
+            const candidata = actual.map((k, j) => (j === i ? Object.assign({}, k, { cantidad: k.cantidad - 1 }) : k));
+            const r = simularCoste(candidata, datosPedido);
+            const ahorro = resultado.total - r.total;
+
+            const mejora = ahorro > mejorAhorro + 0.005;
+            const empate = Math.abs(ahorro - mejorAhorro) <= 0.005;
+            if (mejora || (empate && mejorIndice !== -1 && actual[i].cantidad > actual[mejorIndice].cantidad)) {
+                mejorIndice = i;
+                mejorAhorro = ahorro;
+                mejorResultado = r;
+            }
+        }
+
+        if (mejorIndice === -1) break; // no debería pasar si unidadesRestantes > 0, pero por si acaso
+
+        actual[mejorIndice].cantidad -= 1;
+        unidadesRestantes--;
+        pasos.push({
+            idKit: actual[mejorIndice].idKit,
+            cantidadRestante: actual[mejorIndice].cantidad,
+            ahorro: mejorAhorro,
+            totalTrasPaso: mejorResultado.total
+        });
+        resultado = mejorResultado;
+    }
+
+    return { logrado: resultado.total <= presupuesto, seleccionFinal: actual, totalFinal: resultado.total, pasos };
+}
+
+// Lee la selección actual de kits (checkboxes + cantidades, igual que calcularPedido) y el
+// presupuesto indicado, lanza buscarAjustePresupuesto() y pinta el resultado con la opción de
+// aplicarlo directamente (lo que actualiza los checkboxes/cantidades y genera el pedido normal).
+async function ajustarAPresupuesto() {
+    const resultadoDiv = document.getElementById('pedido-resultado');
+    const inputPresupuesto = document.getElementById('pedido-presupuesto');
+    if (!resultadoDiv || !inputPresupuesto) return;
+
+    const presupuesto = parseNumeroES(inputPresupuesto.value);
+    if (!(presupuesto > 0)) {
+        resultadoDiv.innerHTML = '<p style="color:var(--danger);">Indica un presupuesto máximo mayor que 0.</p>';
+        return;
+    }
+    try {
+        localStorage.setItem(LS_PRESUPUESTO, String(presupuesto));
+    } catch (e) { /* localStorage puede fallar (modo privado, cuota) -- no es crítico */ }
+
+    const checks = document.querySelectorAll('.pedido-check-kit:checked');
+    if (checks.length === 0) {
+        resultadoDiv.innerHTML = '<p style="color:var(--danger);">Selecciona al menos un kit.</p>';
+        return;
+    }
+    const seleccionOriginal = Array.from(checks).map(chk => {
+        const idKit = chk.getAttribute('data-kit');
+        const inputCantidad = document.querySelector(`.pedido-cantidad-kit[data-kit="${CSS.escape(idKit)}"]`);
+        const cantidad = inputCantidad ? (parseInt(inputCantidad.value, 10) || 0) : 0;
+        return { idKit, cantidad };
+    }).filter(s => s.cantidad > 0);
+
+    if (seleccionOriginal.length === 0) {
+        resultadoDiv.innerHTML = '<p style="color:var(--danger);">Indica una cantidad mayor que 0 para al menos un kit seleccionado.</p>';
+        return;
+    }
+
+    resultadoDiv.innerHTML = '<p style="color:var(--text-secondary);">Buscando el mejor ajuste para ese presupuesto...</p>';
+
+    let datosPedido;
+    try {
+        datosPedido = await cargarDatosPedido();
+    } catch (err) {
+        resultadoDiv.innerHTML = `<p style="color:var(--danger);">Error al calcular el ajuste: ${err.message}. Prueba a recargar la página.</p>`;
+        return;
+    }
+    if (datosPedido.kits.length === 0 || Object.keys(datosPedido.filasPorGrupo).length === 0) {
+        cacheDatosPedido = null;
+        resultadoDiv.innerHTML = '<p style="color:var(--danger);">No se han podido cargar todos los datos de la hoja (puede que Google haya tardado demasiado en responder). Pulsa el botón otra vez.</p>';
+        return;
+    }
+
+    const totalOriginal = simularCoste(seleccionOriginal, datosPedido).total;
+
+    if (totalOriginal <= presupuesto) {
+        resultadoDiv.innerHTML = `<p style="color:var(--success);">✅ Este pedido ya está dentro de presupuesto: ${formatearPrecioLocal(totalOriginal)}€ (≤ ${formatearPrecioLocal(presupuesto)}€). No hace falta ajustar nada -- generando el pedido tal cual.</p>`;
+        calcularPedido();
+        return;
+    }
+
+    const ajuste = buscarAjustePresupuesto(seleccionOriginal, presupuesto, datosPedido);
+    renderResultadoAjuste(resultadoDiv, seleccionOriginal, ajuste, presupuesto, totalOriginal);
+}
+
+// Pinta el resultado del ajuste: tabla kit-a-kit (cantidad original vs sugerida), ahorro logrado,
+// el detalle paso a paso (colapsado) y botones para aplicarlo o descartarlo.
+function renderResultadoAjuste(contenedor, seleccionOriginal, ajuste, presupuesto, totalOriginal) {
+    const filasCambios = ajuste.seleccionFinal.map((kitFinal, i) => {
+        const original = seleccionOriginal[i].cantidad;
+        const nueva = kitFinal.cantidad;
+        let celdaNueva;
+        if (nueva === original) {
+            celdaNueva = `${nueva} <span style="color:var(--text-secondary); font-size:12px;">(sin cambios)</span>`;
+        } else if (nueva === 0) {
+            celdaNueva = '<span style="color:var(--danger); font-weight:bold;">❌ 0 — eliminado de este pedido</span>';
+        } else {
+            celdaNueva = `<span style="color:#eab308; font-weight:bold;">${nueva}</span> <span style="color:var(--text-secondary); font-size:12px;">(antes ${original})</span>`;
+        }
+        return `<tr><td>${escapeAttr(kitFinal.idKit)}</td><td>${original}</td><td>${celdaNueva}</td></tr>`;
+    }).join('');
+
+    const ahorro = totalOriginal - ajuste.totalFinal;
+
+    const pasosHtml = ajuste.pasos.length > 0 ? `
+        <details style="margin-top:10px;">
+            <summary style="cursor:pointer; color:var(--text-secondary); font-size:12px;">Ver el detalle de los ${ajuste.pasos.length} recorte(s) aplicados, uno a uno</summary>
+            <ul style="font-size:12px; color:var(--text-secondary); margin:8px 0 0 18px; padding:0;">
+                ${ajuste.pasos.map(p => `<li>Quitada 1 unidad de <strong>${escapeAttr(p.idKit)}</strong> (quedan ${p.cantidadRestante}) — ahorro ${formatearPrecioLocal(p.ahorro)}€ → total tras este paso: ${formatearPrecioLocal(p.totalTrasPaso)}€</li>`).join('')}
+            </ul>
+        </details>` : '';
+
+    const avisoNoLogrado = !ajuste.logrado
+        ? `<p style="color:var(--danger); font-size:13px;">⚠️ No se ha podido bajar hasta ${formatearPrecioLocal(presupuesto)}€ ni quitando todos los kits posibles del pedido -- puede que haga falta revisar precios/proveedores a mano.</p>`
+        : '';
+
+    contenedor.innerHTML = `
+        <div class="card" style="border: 1px solid var(--primary); margin-top:0; margin-bottom:0;">
+            <h3 style="margin-top:0;">🎯 Ajuste sugerido para no pasar de ${formatearPrecioLocal(presupuesto)}€</h3>
+            <p style="color:var(--text-secondary); font-size:13px;">
+                Pedido completo (todos los kits marcados, cantidades tal cual las pusiste): <strong>${formatearPrecioLocal(totalOriginal)}€</strong><br>
+                Pedido ajustado: <strong style="color:var(--success);">${formatearPrecioLocal(ajuste.totalFinal)}€</strong>
+                &nbsp;(ahorro de ${formatearPrecioLocal(ahorro)}€)
+            </p>
+            ${avisoNoLogrado}
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead><tr><th>Kit</th><th>Cantidad original</th><th>Cantidad sugerida</th></tr></thead>
+                    <tbody>${filasCambios}</tbody>
+                </table>
+            </div>
+            ${pasosHtml}
+            <p style="color:var(--text-secondary); font-size:12px; margin-top:12px;">
+                Este ajuste solo quita <strong>unidades de kit completas</strong> (nunca deja un componente a medias con la cantidad justa que falte), porque muchos componentes se comparten entre varios kits -- en cada paso ha quitado la unidad que menos ahorro real aportaba. Si prefieres tú mismo decidir qué componente concreto pedir de menos (por ejemplo si vas a completar ese kit más adelante con otro pedido), pulsa "Calcular Pedido" con tus cantidades originales y edita a mano la columna "Cantidad a pedir" -- cada fila indica en qué kit(s) se usa ese componente.
+            </p>
+            <div style="display:flex; gap:10px; margin-top:15px; flex-wrap:wrap;">
+                <button id="btn-aplicar-ajuste" class="btn" style="background: var(--success);">✅ Aplicar esta sugerencia y generar el pedido</button>
+                <button id="btn-cancelar-ajuste" class="btn" style="background: var(--danger);">Descartar</button>
+            </div>
+        </div>
+    `;
+
+    const btnAplicar = document.getElementById('btn-aplicar-ajuste');
+    const btnCancelar = document.getElementById('btn-cancelar-ajuste');
+    if (btnAplicar) btnAplicar.addEventListener('click', () => aplicarAjuste(ajuste.seleccionFinal));
+    if (btnCancelar) btnCancelar.addEventListener('click', () => { contenedor.innerHTML = ''; });
+}
+
+// Traslada el resultado del ajuste a los checkboxes/cantidades de la lista de kits de arriba
+// (desmarca los que se quedan a 0, actualiza la cantidad de los recortados) y genera el pedido
+// normal con esa selección -- así la tabla final es exactamente la misma que si el usuario hubiera
+// marcado esas cantidades a mano y pulsado "Calcular Pedido".
+function aplicarAjuste(seleccionFinal) {
+    seleccionFinal.forEach(({ idKit, cantidad }) => {
+        const chk = document.querySelector(`.pedido-check-kit[data-kit="${CSS.escape(idKit)}"]`);
+        const inputCantidad = document.querySelector(`.pedido-cantidad-kit[data-kit="${CSS.escape(idKit)}"]`);
+        if (!chk) return;
+        if (cantidad <= 0) {
+            chk.checked = false;
+        } else {
+            chk.checked = true;
+            if (inputCantidad) inputCantidad.value = cantidad;
+        }
+    });
+    calcularPedido();
 }
 
 // NUEVO: escapa texto para usarlo dentro de atributos HTML (name, data-grupo, title...) -- los
@@ -378,8 +746,9 @@ function escapeAttr(texto) {
         .replace(/>/g, '&gt;');
 }
 
-function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo) {
+function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente) {
     precioRealPorGrupo = precioRealPorGrupo || {};
+    usoPorComponente = usoPorComponente || {};
     // MODIFICADO: antes se ordenaba solo alfabéticamente por ID. Ahora se ordena primero por
     // "grupo" (el ID original si el componente tiene un sustituto en Sustituciones, o su propio
     // ID si no) para que un componente y su sustituto queden SIEMPRE en filas consecutivas, y en
@@ -542,12 +911,28 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
             iconoPareja = ` <span title="💬 Equivale a: ${escapeAttr(parejas.join(', '))} (hoja Sustituciones) — evidentemente, solo hace falta comprar uno de los dos" style="cursor:help;">💬</span>`;
         }
 
+        // NUEVO (2026-09-21): en qué kits (de los seleccionados para este pedido) se usa este
+        // componente y cuántas unidades por kit -- así, si te planteas pedir menos de lo necesario
+        // o no pedirlo, ves de un vistazo si eso afecta solo a un kit o a varios (compartido).
+        const usos = usoPorComponente[idComp] || [];
+        let usoHtml = '';
+        if (usos.length > 0) {
+            const partes = usos
+                .map(u => `${escapeAttr(u.idKit)} (${formatearCantidadLocal(u.cantidadPorKit)}/kit)`)
+                .join(', ');
+            const iconoCompartido = usos.length > 1 ? '🔗 ' : '';
+            usoHtml = `<div style="font-size:11px; color:var(--text-secondary); white-space:normal; overflow:visible; margin-top:2px;"
+                title="Si pides menos cantidad de la necesaria (o ninguna), estos son los kits que se quedarían sin poder completarse del todo con este pedido.">
+                ${iconoCompartido}Usado en: ${partes}
+            </div>`;
+        }
+
         filasHtml += `
             <tr data-fila-pedido="${indiceFila}" data-cantidad-necesaria="${cantidadNecesaria}"
                 data-cantidad-pedida="${cantidadPedidaInicial}"
                 data-grupo="${escapeAttr(grupo)}" data-id-componente="${escapeAttr(idComp)}"
                 class="${tienePareja ? 'fila-con-pareja' : ''}">
-                <td>${idComp}${iconoPareja}</td>
+                <td style="white-space:normal;">${idComp}${iconoPareja}${usoHtml}</td>
                 <td>${cantidadNecesaria}</td>
                 <td>${formatearCantidadLocal(stockDisponible)}</td>
                 <td>
@@ -562,7 +947,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     contenedor.innerHTML = `
-        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. Si ningún proveedor tiene hoy stock/tramo de precio para un componente pero ya lo has comprado antes (tiene precio real en Stock_Almacen), aparece como última opción "💰 Precio real (ya en stock)" -- no es un sitio donde pedirlo, es solo el coste medio real ya pagado, para poder seguir estimando el total aunque no haya proveedor sincronizado para ese componente. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos.</p>
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. Si ningún proveedor tiene hoy stock/tramo de precio para un componente pero ya lo has comprado antes (tiene precio real en Stock_Almacen), aparece como última opción "💰 Precio real (ya en stock)" -- no es un sitio donde pedirlo, es solo el coste medio real ya pagado, para poder seguir estimando el total aunque no haya proveedor sincronizado para ese componente. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos. Bajo cada componente, "Usado en" indica en qué kit(s) de este pedido hace falta y cuántas unidades por kit -- si pides menos cantidad de la que corresponde (o ninguna), esos son los kits que se quedarían incompletos con este pedido; el icono 🔗 marca los que comparten componente con otro kit.</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
