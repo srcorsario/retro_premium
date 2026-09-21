@@ -165,6 +165,19 @@ async function cargarDatosPedido() {
         if (idNuevo && idOriginal) sustitucionesMap[idNuevo] = idOriginal;
     });
 
+    // NUEVO (2026-09-21, fix): para cada "grupo" (el ID_Original), la lista de TODOS los IDs
+    // literales conocidos que son ese mismo componente físico (el original + su/sus sustituto(s)
+    // -- puede haber más de uno si se ha sustituido más de una vez). Hace falta para juntar el
+    // STOCK de un componente y su sustituto: Stock_Almacen puede tener las unidades guardadas bajo
+    // cualquiera de los dos IDs (el que se compró la última vez), y sin esto la web podía contar
+    // el mismo componente dos veces -- ver comentario en calcularNecesidadYStockPorGrupo().
+    const idsPorGrupo = {};
+    Object.keys(sustitucionesMap).forEach(idNuevo => {
+        const idOriginal = sustitucionesMap[idNuevo];
+        if (!idsPorGrupo[idOriginal]) idsPorGrupo[idOriginal] = [idOriginal];
+        idsPorGrupo[idOriginal].push(idNuevo);
+    });
+
     // Ahora que ya tenemos sustitucionesMap, agrupamos precioRealPorId (calculado arriba) por
     // "grupo" -- ver comentario de más arriba sobre por qué hace falta.
     const precioRealPorGrupo = {};
@@ -223,7 +236,7 @@ async function cargarDatosPedido() {
         });
     });
 
-    cacheDatosPedido = { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo };
+    cacheDatosPedido = { kits, sustitucionesMap, idsPorGrupo, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo };
     return cacheDatosPedido;
 }
 
@@ -342,7 +355,7 @@ async function calcularPedido() {
         resultadoDiv.innerHTML = `<p style="color:var(--danger);">Error al calcular el pedido: ${err.message}. Prueba a recargar la página.</p>`;
         return;
     }
-    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo } = datosPedido;
+    const { kits, sustitucionesMap, idsPorGrupo, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo } = datosPedido;
 
     // NUEVO (fix): si "Kits_Consolas" o "Componentes" vinieron vacíos (p.ej. porque su petición
     // se quedó sin respuesta -- ver fetchConTimeout en api.js -- y se agotaron los reintentos),
@@ -392,7 +405,7 @@ async function calcularPedido() {
             });
     });
 
-    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente);
+    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, idsPorGrupo, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente);
 }
 
 // NUEVO: el "grupo" de un ID_Componente literal es el ID original si tiene un sustituto
@@ -400,6 +413,39 @@ async function calcularPedido() {
 // cargarDatosPedido() para agrupar filasPorGrupo, ahora reutilizada aquí para detectar parejas.
 function grupoDe(idComp, sustitucionesMap) {
     return sustitucionesMap[idComp] || idComp;
+}
+
+// NUEVO (2026-09-21, fix): el usuario detectó que un componente con pareja (hoja Sustituciones)
+// se contaba dos veces -- p.ej. EEUFS0J221 (0 uds en stock) pedía comprar 20 uds más aunque su
+// sustituto 6.3ZLH220MEFC5X11 (el mismo componente físico) tuviera 108 uds de stock de sobra. La
+// causa: "Stock disponible" y "Cantidad a pedir" se calculaban por ID LITERAL, cada fila con su
+// propio stock por separado, en vez de por GRUPO (componente + su sustituto) como ya hacía
+// correctamente precioRealPorGrupo -- si el stock físico está guardado bajo el ID del sustituto
+// (o al revés), la fila del otro ID no lo veía y pedía de más sin falta real.
+// Esta función agrupa, para los componentes necesarios en ESTE pedido: la necesidad total por
+// grupo (suma de las necesidades de todos sus IDs presentes en el pedido), el stock total por
+// grupo (suma del stock de TODOS los IDs conocidos de ese grupo -- aunque alguno no aparezca en
+// este pedido en concreto, por si el stock está ahí) y la cantidad a pedir resultante (necesidad
+// menos stock, nunca negativa). Se usa tanto en la tabla real (renderTablaPedido) como en el
+// simulador del ajuste de presupuesto (simularCoste), para que ambos den siempre el mismo
+// resultado.
+function calcularNecesidadYStockPorGrupo(idsNecesarios, necesidades, sustitucionesMap, stockPorId, idsPorGrupo) {
+    const necesidadPorGrupo = {};
+    idsNecesarios.forEach(id => {
+        const grupo = grupoDe(id, sustitucionesMap);
+        necesidadPorGrupo[grupo] = (necesidadPorGrupo[grupo] || 0) + (necesidades[id] || 0);
+    });
+
+    const stockPorGrupo = {};
+    const cantidadAPedirPorGrupo = {};
+    Object.keys(necesidadPorGrupo).forEach(grupo => {
+        const idsDelGrupo = (idsPorGrupo && idsPorGrupo[grupo]) || [grupo];
+        const stockTotal = idsDelGrupo.reduce((suma, id) => suma + (stockPorId[id] || 0), 0);
+        stockPorGrupo[grupo] = stockTotal;
+        cantidadAPedirPorGrupo[grupo] = Math.max(0, necesidadPorGrupo[grupo] - stockTotal);
+    });
+
+    return { necesidadPorGrupo, stockPorGrupo, cantidadAPedirPorGrupo };
 }
 
 // ============================================================================================
@@ -431,7 +477,7 @@ function grupoDe(idComp, sustitucionesMap) {
 // la tabla real, para que el resultado del optimizador sea coherente con lo que luego se vería al
 // pulsar "Calcular Pedido" con ese mismo vector de cantidades.
 function simularCoste(seleccionKits, datosPedido) {
-    const { kits, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo } = datosPedido;
+    const { kits, sustitucionesMap, idsPorGrupo, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo } = datosPedido;
 
     const necesidades = {};
     seleccionKits.forEach(({ idKit, cantidad }) => {
@@ -458,6 +504,12 @@ function simularCoste(seleccionKits, datosPedido) {
         return a.localeCompare(b, 'es', { sensitivity: 'base' });
     });
 
+    // NUEVO (2026-09-21, fix): necesidad y stock agrupados por GRUPO (no por ID literal) -- ver
+    // calcularNecesidadYStockPorGrupo(). Sin esto, el optimizador de presupuesto podía dar un total
+    // distinto (más caro) del que luego se vería en la tabla real, porque contaba dos veces el
+    // stock de un componente y su sustituto.
+    const { cantidadAPedirPorGrupo } = calcularNecesidadYStockPorGrupo(idsNecesarios, necesidades, sustitucionesMap, stockPorId, idsPorGrupo);
+
     const preseleccionadoPorGrupo = {};
     const porTienda = {}; // proveedor -> subtotal artículos (sin envío todavía)
     let subtotalStockReal = 0;
@@ -466,12 +518,10 @@ function simularCoste(seleccionKits, datosPedido) {
         const grupo = grupoDe(idComp, sustitucionesMap);
         if (preseleccionadoPorGrupo[grupo]) return; // ya cubierto por su pareja en este grupo
 
-        const cantidadNecesaria = necesidades[idComp];
-        const stockDisponible = stockPorId[idComp] || 0;
-        const cantidadPedida = Math.max(0, cantidadNecesaria - stockDisponible);
+        const cantidadPedida = cantidadAPedirPorGrupo[grupo] || 0;
 
         if (cantidadPedida <= 0) {
-            preseleccionadoPorGrupo[grupo] = true; // cubierto con stock, no hace falta pedir nada
+            preseleccionadoPorGrupo[grupo] = true; // cubierto con stock (propio o de su pareja), no hace falta pedir nada
             return;
         }
 
@@ -746,7 +796,7 @@ function escapeAttr(texto) {
         .replace(/>/g, '&gt;');
 }
 
-function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente) {
+function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, idsPorGrupo, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente) {
     precioRealPorGrupo = precioRealPorGrupo || {};
     usoPorComponente = usoPorComponente || {};
     // MODIFICADO: antes se ordenaba solo alfabéticamente por ID. Ahora se ordena primero por
@@ -774,18 +824,36 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     // evidentemente solo hace falta comprar uno de los dos componentes.
     const preseleccionadoPorGrupo = {};
 
+    // NUEVO (2026-09-21, fix): stock y cantidad a pedir agrupados por GRUPO (componente + su
+    // sustituto), no por ID literal -- ver calcularNecesidadYStockPorGrupo(). Antes, si el stock
+    // físico de un componente estaba guardado bajo el ID de su sustituto (o al revés), la fila de
+    // ese componente no lo veía y la web recomendaba comprar de más sin que hiciera falta.
+    const { stockPorGrupo, cantidadAPedirPorGrupo } = calcularNecesidadYStockPorGrupo(idsNecesarios, necesidades, sustitucionesMap, stockPorId, idsPorGrupo);
+    // De las dos (o más) filas de un mismo grupo, solo la PRIMERA que se pinta se lleva la
+    // cantidad a pedir combinada del grupo entero -- las siguientes se muestran como cubiertas
+    // (igual que ya pasaba con la elección de proveedor), para no pedir el mismo componente dos
+    // veces por partida doble.
+    const cantidadYaAsignadaPorGrupo = {};
+
     idsNecesarios.forEach((idComp, indiceFila) => {
         const cantidadNecesaria = necesidades[idComp];
         const grupo = grupoDe(idComp, sustitucionesMap);
         const opciones = filasPorGrupo[grupo] || [];
 
-        // NUEVO: stock físico ya disponible de este componente (hoja Stock_Almacen). "Cantidad a
-        // pedir" arranca en "cantidad necesaria" MENOS ese stock (nunca por debajo de 0 -- si ya
-        // hay de sobra no tiene sentido pedir en negativo), pero sigue siendo editable como antes
-        // por si el usuario quiere pedir otra cantidad (p.ej. para llegar a un tramo de precio
-        // mejor, o comprar de más aunque ya tenga algo).
-        const stockDisponible = stockPorId[idComp] || 0;
-        const cantidadPedidaInicial = Math.max(0, cantidadNecesaria - stockDisponible);
+        // NUEVO: "Stock disponible" es el stock COMBINADO del grupo (este componente + su
+        // sustituto conocido, si lo tiene) -- ver comentario más arriba. "Cantidad a pedir"
+        // arranca en la cantidad que le falta a ese grupo entero (nunca por debajo de 0), pero
+        // solo en la PRIMERA fila del grupo; el resto arranca en 0 porque esa primera fila ya
+        // incluye toda la necesidad conjunta. Sigue siendo editable como antes por si el usuario
+        // quiere pedir otra cantidad (p.ej. para llegar a un tramo de precio mejor).
+        const stockDisponible = stockPorGrupo[grupo] || 0;
+        let cantidadPedidaInicial;
+        if (!cantidadYaAsignadaPorGrupo[grupo]) {
+            cantidadPedidaInicial = cantidadAPedirPorGrupo[grupo] || 0;
+            cantidadYaAsignadaPorGrupo[grupo] = true;
+        } else {
+            cantidadPedidaInicial = 0;
+        }
 
         // MODIFICADO: el "name" del grupo de radios ahora es por GRUPO (no por fila) -- así, si
         // el componente y su sustituto ocupan dos <tr> distintas, sus radios comparten el mismo
@@ -947,7 +1015,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
     });
 
     contenedor.innerHTML = `
-        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. Si ningún proveedor tiene hoy stock/tramo de precio para un componente pero ya lo has comprado antes (tiene precio real en Stock_Almacen), aparece como última opción "💰 Precio real (ya en stock)" -- no es un sitio donde pedirlo, es solo el coste medio real ya pagado, para poder seguir estimando el total aunque no haya proveedor sincronizado para ese componente. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos. Bajo cada componente, "Usado en" indica en qué kit(s) de este pedido hace falta y cuántas unidades por kit -- si pides menos cantidad de la que corresponde (o ninguna), esos son los kits que se quedarían incompletos con este pedido; el icono 🔗 marca los que comparten componente con otro kit.</p>
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. Si ningún proveedor tiene hoy stock/tramo de precio para un componente pero ya lo has comprado antes (tiene precio real en Stock_Almacen), aparece como última opción "💰 Precio real (ya en stock)" -- no es un sitio donde pedirlo, es solo el coste medio real ya pagado, para poder seguir estimando el total aunque no haya proveedor sincronizado para ese componente. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos, y por eso su "Stock disponible" ya sale sumado entre ambos (el stock físico puede estar guardado bajo cualquiera de los dos IDs) -- la "Cantidad a pedir" combinada de los dos aparece en una sola de las dos filas, la otra sale como cubierta. Bajo cada componente, "Usado en" indica en qué kit(s) de este pedido hace falta y cuántas unidades por kit -- si pides menos cantidad de la que corresponde (o ninguna), esos son los kits que se quedarían incompletos con este pedido; el icono 🔗 marca los que comparten componente con otro kit.</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
