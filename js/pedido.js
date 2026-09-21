@@ -405,7 +405,7 @@ async function calcularPedido() {
             });
     });
 
-    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, idsPorGrupo, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente);
+    renderTablaPedido(resultadoDiv, idsNecesarios, necesidades, sustitucionesMap, idsPorGrupo, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente, seleccion);
 }
 
 // NUEVO: el "grupo" de un ID_Componente literal es el ID original si tiene un sustituto
@@ -796,9 +796,10 @@ function escapeAttr(texto) {
         .replace(/>/g, '&gt;');
 }
 
-function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, idsPorGrupo, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente) {
+function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustitucionesMap, idsPorGrupo, filasPorGrupo, tiersPorProveedor, stockPorId, precioRealPorGrupo, usoPorComponente, seleccion) {
     precioRealPorGrupo = precioRealPorGrupo || {};
     usoPorComponente = usoPorComponente || {};
+    seleccion = seleccion || [];
     // MODIFICADO: antes se ordenaba solo alfabéticamente por ID. Ahora se ordena primero por
     // "grupo" (el ID original si el componente tiene un sustituto en Sustituciones, o su propio
     // ID si no) para que un componente y su sustituto queden SIEMPRE en filas consecutivas, y en
@@ -1014,7 +1015,18 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
             </tr>`;
     });
 
+    // NUEVO (2026-09-21): resumen de para qué kits (y cuántas unidades de cada uno) se ha generado
+    // ESTE pedido -- a petición del usuario, para que quede a la vista de un vistazo (sobre todo
+    // tras aplicar el ajuste de presupuesto, donde algunas cantidades pueden haber cambiado o algún
+    // kit haber quedado eliminado) sin tener que subir a revisar los checkboxes de la lista de kits.
+    const resumenSeleccionHtml = seleccion.length > 0
+        ? `<div style="margin-bottom:14px; padding:10px 14px; background: rgba(59, 130, 246, 0.1); border: 1px solid var(--primary); border-radius:6px; font-size:13px;">
+            📋 Este pedido es para: ${seleccion.map(s => `<strong>${escapeAttr(s.idKit)}</strong> ×${formatearCantidadLocal(s.cantidad)}`).join(', ')}
+          </div>`
+        : '';
+
     contenedor.innerHTML = `
+        ${resumenSeleccionHtml}
         <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. Si ningún proveedor tiene hoy stock/tramo de precio para un componente pero ya lo has comprado antes (tiene precio real en Stock_Almacen), aparece como última opción "💰 Precio real (ya en stock)" -- no es un sitio donde pedirlo, es solo el coste medio real ya pagado, para poder seguir estimando el total aunque no haya proveedor sincronizado para ese componente. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos, y por eso su "Stock disponible" ya sale sumado entre ambos (el stock físico puede estar guardado bajo cualquiera de los dos IDs) -- la "Cantidad a pedir" combinada de los dos aparece en una sola de las dos filas, la otra sale como cubierta. Bajo cada componente, "Usado en" indica en qué kit(s) de este pedido hace falta y cuántas unidades por kit -- si pides menos cantidad de la que corresponde (o ninguna), esos son los kits que se quedarían incompletos con este pedido; el icono 🔗 marca los que comparten componente con otro kit.</p>
         <div style="overflow-x:auto;">
             <table>
