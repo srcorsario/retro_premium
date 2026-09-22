@@ -20,18 +20,26 @@ let cacheDatosPedido = null; // se recalcula solo una vez por carga de página
 // "🎯 Ajustar automáticamente al presupuesto" -- mismo patrón que retro_premium_kits_tamano_lote.
 const LS_PRESUPUESTO = 'retro_premium_presupuesto_pedido';
 
-const ORDEN_PROVEEDORES = ['LCSC', 'ALIEXPRESS', 'TME'];
-const ETIQUETA_PROVEEDOR = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME' };
+const ORDEN_PROVEEDORES = ['LCSC', 'ALIEXPRESS', 'TME', 'MOUSER'];
+const ETIQUETA_PROVEEDOR = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME', MOUSER: 'Mouser' };
 
 // NUEVO: orden de PRESELECCIÓN (no de visualización -- eso lo sigue marcando ORDEN_PROVEEDORES).
 // A partir de ahora se intenta marcar TME por defecto aunque el artículo en sí salga más caro,
 // porque entre no pasar por aduanas y evitar los gastos de gestión de envío de otros couriers
 // (ver [[retro-componentes-web]] sobre FedEx/DHL/UPS) suele salir más económico en conjunto.
 // Si TME no tiene stock suficiente para cubrir la cantidad pedida, se cae al resto en el orden
-// habitual (LCSC, luego AliExpress).
+// habitual.
+// NUEVO (2026-09-22): Mouser añadido justo después de TME -- su envío es DDP a la UE (aranceles ya
+// incluidos en el precio mostrado, sin sorpresas al llegar, ver comentario en GASTOS_ENVIO), así
+// que evita el mismo problema de aduanas que TME, aunque el artículo en sí salga algo más caro que
+// LCSC/AliExpress. Antes no podía entrar aquí porque no existía ninguna hoja de stock/precio por
+// componente para Mouser -- ahora "Variantes_Mouser" (ver cargarDatosPedido) ya la aporta, con los
+// datos investigados a mano (Codigo.gs, importarPreciosMouserInvestigados) y actualizable después
+// tramo a tramo directamente en esa hoja. Si ni TME ni Mouser cubren la cantidad, se cae a LCSC y
+// luego a AliExpress, como antes.
 // NUEVO: exportado -- app.js lo reutiliza para el precio estimado de Kits (misma preselección
 // que en el generador de pedido, en vez de reinventar el orden ahí).
-export const ORDEN_PRESELECCION = ['TME', 'LCSC', 'ALIEXPRESS'];
+export const ORDEN_PRESELECCION = ['TME', 'MOUSER', 'LCSC', 'ALIEXPRESS'];
 
 // NUEVO: Gastos de envío fijos por tienda (de momento a mano; el día que se quiera afinar por
 // pedido real se pueden leer de la hoja "Gastos_Extra" en vez de estos valores fijos).
@@ -44,10 +52,9 @@ export const ORDEN_PRESELECCION = ['TME', 'LCSC', 'ALIEXPRESS'];
 // (aranceles/aduanas ya incluidos en el precio mostrado, sin sorpresas al llegar) y gratis a partir
 // de 75€ de pedido, que es el importe habitual de un pedido de restock -- de ahí 0€ en ambos campos
 // como aproximación razonable (igual de simplificado que el resto de esta tabla, que ya asume un
-// coste fijo por pedido en vez de calcularlo por importe real). De momento NO se ha añadido a
-// ORDEN_PRESELECCION: esa preselección depende de tener datos de stock/precio por componente (como
-// las hojas Variantes_LCSC/AliExpress/TME), y todavía no existe una "Variantes_Mouser" -- se hará
-// cuando se resuelva cómo obtener ese stock (API de Mouser), ver [[retro-componentes-web]].
+// coste fijo por pedido en vez de calcularlo por importe real).
+// NUEVO (2026-09-22): ya está en ORDEN_PRESELECCION (ver comentario ahí) -- hacía falta la hoja
+// "Variantes_Mouser" con datos de stock/precio por componente, que ya existe.
 const GASTOS_ENVIO = {
     LCSC: { envio: 40, aduanas: 30 },
     ALIEXPRESS: { envio: 0, aduanas: 8 },
@@ -110,12 +117,17 @@ export async function inicializarModuloPedido() {
 async function cargarDatosPedido() {
     if (cacheDatosPedido) return cacheDatosPedido;
 
-    const [componentes, kits, variantesLCSC, variantesAli, variantesTME, datosStock] = await Promise.all([
+    // NUEVO (2026-09-22): "Variantes_Mouser" se pide igual que las otras tres -- si su GID todavía
+    // no está registrado en config.js (ENV.SHEETS), obtenerDatos() ya devuelve [] sola (con un
+    // aviso en la consola) en vez de romper este Promise.all, así que Mouser simplemente no
+    // aparecerá como opción hasta que se añada esa GID -- ver comentario junto a ENV.SHEETS.
+    const [componentes, kits, variantesLCSC, variantesAli, variantesTME, variantesMouser, datosStock] = await Promise.all([
         obtenerDatos('Componentes'),
         obtenerDatos('Kits_Consolas'),
         obtenerDatos('Variantes_LCSC'),
         obtenerDatos('Variantes_AliExpress'),
         obtenerDatos('Variantes_TME'),
+        obtenerDatos('Variantes_Mouser'),
         obtenerDatos('Stock_Almacen')
     ]);
 
@@ -210,7 +222,8 @@ async function cargarDatosPedido() {
     const tiersPorProveedor = {
         LCSC: tiersPorId(variantesLCSC),
         ALIEXPRESS: tiersPorId(variantesAli),
-        TME: tiersPorId(variantesTME)
+        TME: tiersPorId(variantesTME),
+        MOUSER: tiersPorId(variantesMouser)
     };
 
     // Agrupamos las filas de Componentes por "grupo" (el ID_Original si es un sustituto, o su
@@ -319,6 +332,43 @@ function calcularMejorCompra(tiers, cantidadNecesaria) {
         desglose: [{ udsPack: tramoParaStock.udsPack, unidades: stockReal, precioUnitario: precioUnitarioParcial }],
         totalUnidades: stockReal,
         totalPrecio: stockReal * precioUnitarioParcial
+    };
+}
+
+// NUEVO (2026-09-22, a petición del usuario -- "sería interesante saber si conviene más pedir 50
+// unidades en vez de 40, o 100 en vez de 90"): dado el mismo conjunto de tramos de un proveedor y
+// la compra ya calculada por calcularMejorCompra() para la cantidad pedida, comprueba si subir la
+// cantidad hasta el UMBRAL de algún tramo superior sale IGUAL o MÁS BARATO en total que comprar
+// exactamente lo pedido -- esto pasa cuando el precio/unidad de ese tramo baja tanto que, aunque
+// se compren más unidades, el total no sube (a veces incluso baja). Solo se sugiere cuando hay
+// stock suficiente del proveedor para llegar a ese tramo, y solo cuando el total sale igual o
+// menor -- nunca "un poco más caro pero a cambio de más stock", porque eso ya es una decisión de
+// gusto del usuario, no un ahorro objetivo. Si hay varios tramos superiores que cumplen la
+// condición, se queda con el de total más bajo. Devuelve null si no hay ninguna mejora así.
+function mejorTramoAlternativo(tiers, cantidadPedida, compraActual) {
+    if (!compraActual || !compraActual.logrado || !(cantidadPedida > 0)) return null;
+    const validos = (tiers || []).filter(t => t.udsPack > 0 && t.precioPack > 0);
+    if (validos.length === 0) return null;
+
+    const stockReal = Math.max(...validos.map(t => t.stockPacks || 0));
+    const totalActual = compraActual.totalPrecio;
+
+    let mejor = null;
+    validos.forEach(t => {
+        if (t.udsPack <= cantidadPedida) return; // no es "pedir más" -- es el tramo actual o uno inferior
+        if (t.udsPack > stockReal) return; // no hay stock suficiente para llegar a ese umbral
+        const totalConEseTramo = t.precioPack; // precio YA es el total por comprar "udsPack" unidades
+        if (totalConEseTramo <= totalActual + 0.0001 && (!mejor || totalConEseTramo < mejor.total)) {
+            mejor = { cantidad: t.udsPack, total: totalConEseTramo };
+        }
+    });
+
+    if (!mejor) return null;
+    return {
+        cantidadSugerida: mejor.cantidad,
+        totalSugerido: mejor.total,
+        ahorro: totalActual - mejor.total,
+        udsExtra: mejor.cantidad - cantidadPedida
     };
 }
 
@@ -871,7 +921,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                 const tiers = (tiersPorProveedor[opt.proveedor] && tiersPorProveedor[opt.proveedor][opt.literalId]) || [];
                 const compra = calcularMejorCompra(tiers, cantidadPedidaInicial);
                 const hayStock = tiers.some(t => t.stockPacks > 0);
-                return Object.assign({}, opt, { compra, hayStock });
+                return Object.assign({}, opt, { compra, hayStock, tiers });
             });
 
         // NUEVO (2026-09-20): si este hueco tiene un precio real registrado en Stock_Almacen
@@ -939,7 +989,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
                 // actualizarFilaPorCantidad() al editar "Cantidad a pedir", para que el resultado
                 // sea idéntico se calcule cuando se calcule.
                 const { desgloseTexto, texto: textoCompra, color: colorTexto } =
-                    textoYColorOpcion(opt.compra, opt.hayStock, cantidadPedidaInicial);
+                    textoYColorOpcion(opt.compra, opt.hayStock, cantidadPedidaInicial, opt.tiers);
                 // NUEVO: la etiqueta del proveedor (+marca) ahora es un link a la ficha real del
                 // producto cuando esa fila de Componentes tiene uno guardado -- ver
                 // etiquetaProveedorHtml().
@@ -1027,7 +1077,7 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
 
     contenedor.innerHTML = `
         ${resumenSeleccionHtml}
-        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), aunque el artículo en sí salga algo más caro; si no cubre la cantidad, cae a LCSC o AliExpress. Si ningún proveedor tiene hoy stock/tramo de precio para un componente pero ya lo has comprado antes (tiene precio real en Stock_Almacen), aparece como última opción "💰 Precio real (ya en stock)" -- no es un sitio donde pedirlo, es solo el coste medio real ya pagado, para poder seguir estimando el total aunque no haya proveedor sincronizado para ese componente. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos, y por eso su "Stock disponible" ya sale sumado entre ambos (el stock físico puede estar guardado bajo cualquiera de los dos IDs) -- la "Cantidad a pedir" combinada de los dos aparece en una sola de las dos filas, la otra sale como cubierta. Bajo cada componente, "Usado en" indica en qué kit(s) de este pedido hace falta y cuántas unidades por kit -- si pides menos cantidad de la que corresponde (o ninguna), esos son los kits que se quedarían incompletos con este pedido; el icono 🔗 marca los que comparten componente con otro kit.</p>
+        <p style="color:var(--text-secondary); font-size:12px; margin-top:0;">"Stock disponible" es lo que ya tienes en Stock_Almacen MÁS lo que está "en camino" (pedido a un proveedor pero todavía sin llegar). "Cantidad a pedir" empieza en "Cantidad necesaria" menos ese stock (nunca en negativo) pero puedes editarla libremente -- el precio se recalcula al momento con lo que pongas ahí, no con la cantidad necesaria bruta. Cada opción calcula el precio por tramos: se aplica el precio por unidad del tramo cuyo umbral alcanza la "Cantidad a pedir" a esa cantidad exacta (si pides menos que el tramo más bajo, se compra su mínimo). Por defecto se preselecciona TME cuando tiene stock suficiente (para evitar aduanas y gastos de gestión de otros couriers), luego Mouser (también sin sorpresas de aduanas, envío DDP) y si ninguno cubre la cantidad, cae a LCSC o AliExpress. Cuando pedir más cantidad de la indicada sale igual o más barato en total (por entrar en un tramo de precio mejor), aparece un aviso "💡 Pedir X en vez de Y..." bajo esa opción -- solo se muestra cuando el ahorro es real, nunca "un poco más caro pero...". Si ningún proveedor tiene hoy stock/tramo de precio para un componente pero ya lo has comprado antes (tiene precio real en Stock_Almacen), aparece como última opción "💰 Precio real (ya en stock)" -- no es un sitio donde pedirlo, es solo el coste medio real ya pagado, para poder seguir estimando el total aunque no haya proveedor sincronizado para ese componente. El icono 💬 marca componentes con un sustituto equivalente (hoja Sustituciones): evidentemente, solo hace falta comprar uno de los dos, y por eso su "Stock disponible" ya sale sumado entre ambos (el stock físico puede estar guardado bajo cualquiera de los dos IDs) -- la "Cantidad a pedir" combinada de los dos aparece en una sola de las dos filas, la otra sale como cubierta. Bajo cada componente, "Usado en" indica en qué kit(s) de este pedido hace falta y cuántas unidades por kit -- si pides menos cantidad de la que corresponde (o ninguna), esos son los kits que se quedarían incompletos con este pedido; el icono 🔗 marca los que comparten componente con otro kit.</p>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
@@ -1090,7 +1140,10 @@ function etiquetaProveedorHtml(proveedor, marca, link) {
 // actualizarFilaPorCantidad() (al editar "Cantidad a pedir"), para que ambos caminos den
 // exactamente el mismo resultado. "cantidadPedida === 0" es un caso válido y distinto de "sin
 // stock": significa que el stock que ya tienes cubre toda la necesidad y no hace falta pedir nada.
-function textoYColorOpcion(compra, hayStock, cantidadPedida) {
+// MODIFICADO (2026-09-22): nuevo parámetro "tiers" (opcional -- la opción "💰 Precio real" no
+// tiene tramos por proveedor, así que puede omitirse) para poder avisar con mejorTramoAlternativo()
+// si pedir más cantidad de la indicada sale igual o más barato en total (ver esa función).
+function textoYColorOpcion(compra, hayStock, cantidadPedida, tiers) {
     const desgloseTexto = compra.desglose
         .map(d => `${d.unidades} uds a ${formatearPrecioUnitarioLocal(d.precioUnitario)}€/ud ${d.esPrecioReal ? '(precio real de compra)' : `(tramo ≥${d.udsPack}u)`}`)
         .join(' + ');
@@ -1105,6 +1158,11 @@ function textoYColorOpcion(compra, hayStock, cantidadPedida) {
     if (!compra.logrado) {
         texto += ' ⚠️ no cubre toda la cantidad (stock insuficiente)';
         color = 'color:#eab308;';
+    }
+    const sugerencia = mejorTramoAlternativo(tiers, cantidadPedida, compra);
+    if (sugerencia) {
+        const detalleAhorro = sugerencia.ahorro > 0.004 ? `, ahorras ${formatearPrecioLocal(sugerencia.ahorro)}€` : ' al mismo precio';
+        texto += ` <br><span style="color:var(--success); font-size:11px;">💡 Pedir ${formatearCantidadLocal(sugerencia.cantidadSugerida)} en vez de ${formatearCantidadLocal(cantidadPedida)} sale igual o más barato: ${formatearPrecioLocal(sugerencia.totalSugerido)}€ (+${formatearCantidadLocal(sugerencia.udsExtra)} uds${detalleAhorro})</span>`;
     }
     return { desgloseTexto, texto, color };
 }
@@ -1138,13 +1196,13 @@ function actualizarFilaPorCantidad(tr) {
         // NUEVO (2026-09-20): la opción de precio real de Stock_Almacen no tiene tramos por
         // proveedor -- se recalcula aparte con el precio fijo guardado en data-precio-real (ver
         // renderTablaPedido) en vez de buscarla en tiersPorProveedor (que no la conoce).
-        let compra, hayStock;
+        let compra, hayStock, tiers = [];
         if (proveedor === 'STOCK_REAL') {
             const precioReal = parseNumeroES(radio.getAttribute('data-precio-real'));
             compra = compraConPrecioReal(precioReal, cantidadPedida);
             hayStock = precioReal > 0;
         } else {
-            const tiers = (tiersPorProveedor[proveedor] && tiersPorProveedor[proveedor][literalId]) || [];
+            tiers = (tiersPorProveedor[proveedor] && tiersPorProveedor[proveedor][literalId]) || [];
             compra = calcularMejorCompra(tiers, cantidadPedida);
             hayStock = tiers.some(t => t.stockPacks > 0);
         }
@@ -1157,7 +1215,7 @@ function actualizarFilaPorCantidad(tr) {
         radio.setAttribute('data-logrado', compra.logrado);
 
         const { desgloseTexto, texto: textoCompra, color: colorTexto } =
-            textoYColorOpcion(compra, hayStock, cantidadPedida);
+            textoYColorOpcion(compra, hayStock, cantidadPedida, tiers);
         radio.setAttribute('data-desglose', desgloseTexto);
 
         const label = radio.closest('label');

@@ -1551,6 +1551,385 @@ function crearFilasTMEEnComponentes() {
   return `Añadidas ${filasNuevas.length} filas nuevas para: ${symbolsAgregados.join(', ')}.`;
 }
 
+/**
+ * NUEVO (2026-09-22): igual que crearFilasTMEEnComponentesUI, para poder lanzar
+ * crearFilasMouserEnComponentes() desde el menú/editor sin mirar el log de ejecuciones.
+ */
+function crearFilasMouserEnComponentesUI() {
+  try {
+    const msg = crearFilasMouserEnComponentes();
+    SpreadsheetApp.getUi().alert("✅ " + msg);
+  } catch (err) {
+    SpreadsheetApp.getUi().alert("❌ Error: " + err.message);
+  }
+}
+
+/**
+ * NUEVO (2026-09-22): AÑADIR MOUSER COMO PROVEEDOR EN "Componentes" -- igual que
+ * crearFilasTMEEnComponentes(), pero para Mouser (hoja "Variantes_Mouser" en vez de
+ * "Variantes_TME"). Por cada ID_Componente que ya tenga datos reales en Variantes_Mouser y
+ * todavía no tenga su propia fila "MOUSER" en Componentes, añade una fila nueva copiando los
+ * datos generales (Tipo, Valor, Voltaje, Encapsulado, Marca_Top, Serie, Rol_Circuito...) de la
+ * fila existente de ese componente, pone en la columna "Link_AliExpress" (reutilizada para
+ * cualquier proveedor, ver comentario junto a esa columna en crearFilasTMEEnComponentes) un
+ * enlace de búsqueda a mouser.es, y en "Proveedor_Preferido" el valor "MOUSER". Todas las
+ * columnas se resuelven por NOMBRE de cabecera (nunca por posición fija), exactamente igual que
+ * la versión de TME, para no romper nada si el usuario reordena columnas en su hoja.
+ */
+function crearFilasMouserEnComponentes() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetComp = ss.getSheetByName("Componentes");
+  const sheetMouser = ss.getSheetByName("Variantes_Mouser");
+  if (!sheetComp || !sheetMouser) throw new Error("No se encuentran las hojas 'Componentes' o 'Variantes_Mouser'.");
+
+  // 1. Symbols con datos reales en Variantes_Mouser (columna A)
+  const datosMouser = sheetMouser.getDataRange().getValues();
+  datosMouser.shift(); // quitamos cabecera
+  const symbolsConDatos = Array.from(new Set(
+    datosMouser.map(function(row) { return String(row[0]); }).filter(function(s) { return s; })
+  ));
+
+  if (symbolsConDatos.length === 0) return "No hay datos en Variantes_Mouser todavía.";
+
+  // 2. Leer Componentes completo
+  const datosComp = sheetComp.getDataRange().getValues();
+  const headers = datosComp.shift().map(function(h) { return String(h).trim(); });
+
+  const colCod = headers.indexOf('Cod_Componente');
+  const colId = headers.indexOf('ID_Componente');
+  const colTipo = headers.indexOf('Tipo');
+  const colValor = headers.indexOf('Valor');
+  const colVoltaje = headers.indexOf('Voltaje');
+  const colEncapsulado = headers.indexOf('Encapsulado');
+  const colMarca = headers.indexOf('Marca_Top');
+  const colSerie = headers.indexOf('Serie');
+  const colRol = headers.indexOf('Rol_Circuito');
+  const colLCSCCode = headers.indexOf('LCSC_Code');
+  const colLink = headers.indexOf('Link_AliExpress');
+  const colProveedor = headers.indexOf('Proveedor_Preferido');
+  const colMaxUds = headers.indexOf('Máximo de Unidades por Pack');
+  const colMaxPrecio = headers.indexOf('Presupuesto Máximo en €');
+  const colKits = headers.indexOf('Kits_que_lo_usan');
+
+  if (colId === -1 || colProveedor === -1 || colLink === -1) {
+    throw new Error("Faltan columnas esperadas (ID_Componente, Proveedor_Preferido o Link_AliExpress) en Componentes.");
+  }
+
+  // 3. Detectar qué symbols YA tienen su fila Mouser, y guardar una fila "plantilla" por symbol
+  const yaTieneFilaMouser = {};
+  const plantillaPorId = {};
+  datosComp.forEach(function(row) {
+    const id = String(row[colId] || '');
+    if (!id) return;
+    if (!plantillaPorId[id]) plantillaPorId[id] = row; // primera fila que veamos con ese ID, de referencia
+    if (String(row[colProveedor] || '').trim().toUpperCase() === 'MOUSER') {
+      yaTieneFilaMouser[id] = true;
+    }
+  });
+
+  // 4. Calcular próximo Cod_Componente disponible
+  let siguienteCod = 1;
+  if (colCod !== -1) {
+    datosComp.forEach(function(row) {
+      const n = Number(row[colCod]);
+      if (!isNaN(n) && n >= siguienteCod) siguienteCod = n + 1;
+    });
+  }
+
+  // 5. Construir filas nuevas
+  const filasNuevas = [];
+  const symbolsAgregados = [];
+
+  symbolsConDatos.forEach(function(symbol) {
+    if (yaTieneFilaMouser[symbol]) return; // ya tiene su fila Mouser, no duplicar
+
+    const plantilla = plantillaPorId[symbol]; // puede ser undefined si el symbol no existía en Componentes (no debería pasar)
+    const fila = new Array(headers.length).fill('');
+
+    if (colCod !== -1) { fila[colCod] = siguienteCod; siguienteCod++; }
+    fila[colId] = symbol;
+    if (plantilla) {
+      if (colTipo !== -1) fila[colTipo] = plantilla[colTipo];
+      if (colValor !== -1) fila[colValor] = plantilla[colValor];
+      if (colVoltaje !== -1) fila[colVoltaje] = plantilla[colVoltaje];
+      if (colEncapsulado !== -1) fila[colEncapsulado] = plantilla[colEncapsulado];
+      if (colMarca !== -1) fila[colMarca] = plantilla[colMarca];
+      if (colSerie !== -1) fila[colSerie] = plantilla[colSerie];
+      if (colRol !== -1) fila[colRol] = plantilla[colRol];
+      if (colMaxUds !== -1) fila[colMaxUds] = plantilla[colMaxUds];
+      if (colMaxPrecio !== -1) fila[colMaxPrecio] = plantilla[colMaxPrecio];
+      if (colKits !== -1) fila[colKits] = plantilla[colKits];
+    }
+    if (colLCSCCode !== -1) fila[colLCSCCode] = ''; // no aplica para Mouser
+    fila[colLink] = 'https://www.mouser.es/c/?q=' + encodeURIComponent(symbol);
+    fila[colProveedor] = 'MOUSER';
+    // L, M, N (Precio_Pack/Uds_Pack/Precio_Unitario) se quedan en blanco: la fórmula MAP() de la fila 1 se autoextiende sola
+
+    filasNuevas.push(fila);
+    symbolsAgregados.push(symbol);
+  });
+
+  if (filasNuevas.length === 0) return "Todos los componentes con datos en Mouser ya tenían su fila. No se ha añadido nada.";
+
+  const ultimaFila = obtenerUltimaFilaRealComponentes(datosComp, colId, colCod);
+  sheetComp.getRange(ultimaFila + 1, 1, filasNuevas.length, headers.length).setValues(filasNuevas);
+
+  return `Añadidas ${filasNuevas.length} filas nuevas para: ${symbolsAgregados.join(', ')}.`;
+}
+
+/**
+ * NUEVO (2026-09-22): IMPORTACIÓN ÚNICA de los precios/stock de Mouser España ya investigados a
+ * mano (capturas + consultas directas a mouser.es, 21-22/09/2026) para los ~41 componentes del
+ * recap-kit en los que se encontraron datos -- el mismo comparativo Mouser vs TME que ya se
+ * entregó en Excel. Se ejecuta UNA SOLA VEZ desde el editor de Apps Script (▶ Ejecutar,
+ * eligiendo la función "importarPreciosMouserInvestigados") para arrancar la hoja
+ * "Variantes_Mouser" con datos reales -- necesario porque, a diferencia de LCSC/TME, Mouser no
+ * tiene ningún endpoint público que se pueda pedir por lote sin clave (solo su API oficial de
+ * pago con clave personal, ver consultarStockMouser/acción 'consultar_mouser', pensada para
+ * consultas puntuales de un componente, no para sincronizar todo el catálogo).
+ * Es segura de ejecutar más de una vez: antes de insertar, borra cualquier fila previa de estos
+ * mismos ID_Componente en Variantes_Mouser (limpiarVariantesExistentes), así que repetirla sólo
+ * deja la hoja igual, nunca duplica tramos.
+ * A partir de aquí, para mantener estos precios/stock al día basta con sobreescribir a mano las
+ * filas del componente que toque directamente en "Variantes_Mouser" (mismas 4 columnas que
+ * Variantes_TME: ID_Componente, Variacion_Pack, Precio_Pack_EUR, Stock_Packs -- este último es el
+ * precio TOTAL de comprar "Variacion_Pack" unidades, no el precio unitario), o pasándome capturas
+ * nuevas de mouser.es para que yo actualice este mismo array y se vuelva a ejecutar la función.
+ */
+function importarPreciosMouserInvestigados() {
+  // [ID_Componente, Variacion_Pack, Precio_Pack_EUR, Stock_Packs] -- consultado 21-22/09/2026.
+  const DATOS_MOUSER_INVESTIGADOS = [
+    ["025101.5MXL", 1, 1.07, 10547],
+    ["025101.5MXL", 5, 4.43, 10547],
+    ["025101.5MXL", 10, 8.13, 10547],
+    ["025101.5MXL", 50, 33.75, 10547],
+    ["025101.5MXL", 100, 60.0, 10547],
+    ["025101.5MXL", 250, 140.0, 10547],
+    ["025101.5MXL", 500, 258.0, 10547],
+    ["025101.5MXL", 1000, 494.0, 10547],
+    ["025101.5MXL", 3000, 1446.0, 10547],
+    ["16SVPC100M", 1, 1.35, 14274],
+    ["16SVPC100M", 10, 7.19, 14274],
+    ["16SVPC100M", 100, 65.1, 14274],
+    ["16SVPC100M", 500, 269.0, 14274],
+    ["16SVPC100M", 1000, 478.0, 14274],
+    ["16SVPG47M", 1, 1.27, 14186],
+    ["16SVPG47M", 10, 9.1, 14186],
+    ["16SVPG47M", 2500, 2275.0, 14186],
+    ["6.3ZLH220MEFC5X11", 1, 0.387, 2525],
+    ["6.3ZLH220MEFC5X11", 10, 2.22, 2525],
+    ["6.3ZLH220MEFC5X11", 100, 13.4, 2525],
+    ["6.3ZLH220MEFC5X11", 500, 54.0, 2525],
+    ["6.3ZLH220MEFC5X11", 1000, 91.0, 2525],
+    ["6.3ZLH220MEFC5X11", 3000, 198.0, 2525],
+    ["6.3ZLH220MEFC5X11", 6000, 384.0, 2525],
+    ["6SVPC220MV", 1, 1.32, 87],
+    ["6SVPC220MV", 10, 7.96, 87],
+    ["6SVPC220MV", 100, 58.6, 87],
+    ["6SVPC220MV", 500, 240.0, 87],
+    ["6SVPC220MV", 1000, 446.0, 87],
+    ["B08102R5105R", 1, 2.15, 830],
+    ["B08102R5105R", 10, 14.6, 830],
+    ["B08102R5105R", 50, 72.0, 830],
+    ["B08102R5105R", 100, 132.0, 830],
+    ["B08102R5105R", 500, 615.0, 830],
+    ["B08102R5105R", 2000, 2120.0, 830],
+    ["B08102R5105R", 5000, 4805.0, 830],
+    ["ECEA1AKS470", 1, 0.292, 2043],
+    ["ECEA1AKS470", 10, 1.32, 2043],
+    ["ECEA1AKS470", 100, 10.3, 2043],
+    ["EEEFK0J101P", 1, 0.525, 12818],
+    ["EEEFK0J101P", 10, 2.43, 12818],
+    ["EEEFK0J101P", 100, 21.7, 12818],
+    ["EEEFK0J101P", 500, 85.0, 12818],
+    ["EEEFK0J101P", 1000, 149.0, 12818],
+    ["EEEFK1C100R", 1, 0.413, 138],
+    ["EEEFK1C100R", 10, 2.57, 138],
+    ["EEEFK1C100R", 100, 16.8, 138],
+    ["EEEFK1C100R", 500, 65.0, 138],
+    ["EEEFK1C100R", 1000, 119.0, 138],
+    ["EEEFK1C100R", 2000, 220.0, 138],
+    ["EEEFK1E330UR", 1, 0.482, 7568],
+    ["EEEFK1E330UR", 10, 2.26, 7568],
+    ["EEEFK1E330UR", 100, 19.2, 7568],
+    ["EEEFK1E330UR", 500, 77.5, 7568],
+    ["EEEFK1E330UR", 1000, 137.0, 7568],
+    ["EEEFPC470UAR", 1, 0.585, 211],
+    ["EEEFPC470UAR", 10, 3.88, 211],
+    ["EEEFPC470UAR", 100, 24.2, 211],
+    ["EEEFPC470UAR", 500, 97.5, 211],
+    ["EEEFPC470UAR", 1000, 179.0, 211],
+    ["EEEFT1C470AR", 1, 0.533, 879],
+    ["EEEFT1C470AR", 10, 3.42, 879],
+    ["EEEFT1C470AR", 100, 21.9, 879],
+    ["EEEFT1C470AR", 500, 86.0, 879],
+    ["EEEFT1C470AR", 1000, 158.0, 879],
+    ["EEEFT1C470AR", 2000, 292.0, 879],
+    ["EEEFTH100UAR", 1, 0.499, 10622],
+    ["EEEFTH100UAR", 10, 2.32, 10622],
+    ["EEEFTH100UAR", 100, 20.6, 10622],
+    ["EEEFTH100UAR", 500, 81.5, 10622],
+    ["EEEFTH100UAR", 1000, 149.0, 10622],
+    ["EEEFTH100UAR", 2000, 260.0, 10622],
+    ["EEEHD1H2R2R", 1, 0.353, 3810],
+    ["EEEHD1H2R2R", 10, 1.71, 3810],
+    ["EEEHD1H2R2R", 100, 14.5, 3810],
+    ["EEEHD1H2R2R", 500, 58.5, 3810],
+    ["EEEHD1H2R2R", 1000, 108.0, 3810],
+    ["EEEHD1H2R2R", 2000, 198.0, 3810],
+    ["EEHZA1V151V", 1, 1.34, 160],
+    ["EEHZA1V151V", 10, 12.6, 160],
+    ["EEHZA1V151V", 50, 54.0, 160],
+    ["EEHZA1V151V", 100, 93.7, 160],
+    ["EEHZA1V151V", 500, 385.5, 160],
+    ["EEHZA1V151V", 1000, 742.0, 160],
+    ["EEHZA1V270V", 1, 1.5, 1629],
+    ["EEHZA1V270V", 10, 10.3, 1629],
+    ["EEHZA1V270V", 50, 42.9, 1629],
+    ["EEHZA1V270V", 100, 77.1, 1629],
+    ["EEHZA1V270V", 500, 330.5, 1629],
+    ["EEHZA1V270V", 1000, 611.0, 1629],
+    ["EEHZA1V270V", 2000, 1056.0, 1629],
+    ["EEHZK1E470R", 1, 0.783, 655],
+    ["EEHZK1E470R", 10, 7.07, 655],
+    ["EEHZK1E470R", 500, 292.0, 655],
+    ["EEHZK1E470R", 1000, 511.0, 655],
+    ["EEUFC1H2R2", 1, 0.327, 6706],
+    ["EEUFC1H2R2", 10, 1.51, 6706],
+    ["EEUFC1H2R2", 100, 11.9, 6706],
+    ["EEUFR0J332L", 1, 1.26, 2500],
+    ["EEUFR0J332L", 10, 6.23, 2500],
+    ["EEUFR0J332L", 100, 51.5, 2500],
+    ["EEUFR0J332LB", 1, 1.27, 2338],
+    ["EEUFR0J332LB", 10, 6.52, 2338],
+    ["EEUFR0J332LB", 100, 59.0, 2338],
+    ["EEUFR1C152B", 1, 1.01, 3087],
+    ["EEUFR1C152B", 10, 5.26, 3087],
+    ["EEUFR1C152B", 100, 47.5, 3087],
+    ["EEUFR1C152B", 500, 184.0, 3087],
+    ["EEUFR1C152B", 1000, 328.0, 3087],
+    ["EEUFR1C221", 1, 0.396, 14577],
+    ["EEUFR1C221", 10, 2.59, 14577],
+    ["EEUFR1C221", 100, 16.2, 14577],
+    ["EEUFR1C221B", 1, 0.413, 559],
+    ["EEUFR1C221B", 10, 2.59, 559],
+    ["EEUFR1C221B", 100, 16.5, 559],
+    ["EEUFR1C221B", 500, 65.0, 559],
+    ["EEUFR1C221B", 1000, 120.0, 559],
+    ["EEUFR1C221B", 2000, 222.0, 559],
+    ["EEUFR1C681LB", 1, 0.731, 1741],
+    ["EEUFR1C681LB", 10, 3.55, 1741],
+    ["EEUFR1C681LB", 100, 31.8, 1741],
+    ["EEUFR1C681LB", 500, 127.5, 1741],
+    ["EEUFR1C681LB", 1000, 237.0, 1741],
+    ["EEUFR1C681LB", 2000, 424.0, 1741],
+    ["EEUFR1E101", 1, 0.396, 4533],
+    ["EEUFR1E101", 10, 2.59, 4533],
+    ["EEUFR1E101", 100, 16.2, 4533],
+    ["EEUFR1E101B", 1, 0.413, 230],
+    ["EEUFR1E101B", 10, 2.59, 230],
+    ["EEUFR1E101B", 100, 16.5, 230],
+    ["EEUFR1E101B", 500, 65.0, 230],
+    ["EEUFR1E101B", 1000, 120.0, 230],
+    ["EEUFR1E101B", 2000, 222.0, 230],
+    ["EEUFR1E102B", 1, 1.2, 11276],
+    ["EEUFR1E102B", 10, 6.69, 11276],
+    ["EEUFR1E102B", 100, 59.3, 11276],
+    ["EEUFR1E102B", 500, 246.0, 11276],
+    ["EEUFR1E102B", 1000, 480.0, 11276],
+    ["EEUFR1E331", 1, 0.576, 12157],
+    ["EEUFR1E331", 10, 2.87, 12157],
+    ["EEUFR1E331", 100, 23.1, 12157],
+    ["EEUFR1E331B", 1, 0.602, 6436],
+    ["EEUFR1E331B", 10, 3.0, 6436],
+    ["EEUFR1E331B", 100, 26.5, 6436],
+    ["EEUFR1E331B", 500, 106.5, 6436],
+    ["EEUFR1E331B", 1000, 187.0, 6436],
+    ["EEUFR1E331B", 2000, 332.0, 6436],
+    ["EEUFR1E470B", 1, 0.327, 6115],
+    ["EEUFR1E470B", 10, 1.57, 6115],
+    ["EEUFR1E470B", 100, 13.3, 6115],
+    ["EEUFR1E470B", 500, 52.0, 6115],
+    ["EEUFR1E470B", 1000, 96.0, 6115],
+    ["EEUFR1E470B", 2000, 168.0, 6115],
+    ["EEUFR1E470B", 4000, 300.0, 6115],
+    ["EEUFR1H100", 1, 0.353, 3601],
+    ["EEUFR1H100", 10, 2.07, 3601],
+    ["EEUFR1H100", 100, 13.0, 3601],
+    ["EEUFR1H220", 1, 0.335, 0],
+    ["EEUFR1H220", 10, 2.07, 0],
+    ["EEUFR1H220", 100, 13.0, 0],
+    ["EEUFR1H220B", 1, 0.327, 0],
+    ["EEUFR1H220B", 10, 1.57, 0],
+    ["EEUFR1H220B", 100, 13.3, 0],
+    ["EEUFR1H220B", 500, 53.0, 0],
+    ["EEUFR1H220B", 1000, 96.0, 0],
+    ["EEUFR1H220B", 2000, 168.0, 0],
+    ["EEUFR1H220B", 4000, 300.0, 0],
+    ["EEUFS0J221", 1, 0.335, 15208],
+    ["EEUFS0J221", 10, 1.57, 15208],
+    ["EEUFS0J221", 100, 12.3, 15208],
+    ["EEUFS0J221B", 1, 0.344, 6183],
+    ["EEUFS0J221B", 10, 1.63, 6183],
+    ["EEUFS0J221B", 100, 14.0, 6183],
+    ["EEUFS0J221B", 500, 55.0, 6183],
+    ["EEUFS0J221B", 2000, 178.0, 6183],
+    ["EEUFS1C332", 1, 1.63, 864],
+    ["EEUFS1C332", 10, 10.9, 864],
+    ["EEUFS1C332", 50, 42.8, 864],
+    ["EEUFS1C332", 100, 71.6, 864],
+    ["EEUFS1C332B", 1, 1.87, 44],
+    ["EEUFS1C332B", 10, 12.2, 44],
+    ["EEUFS1C332B", 50, 47.75, 44],
+    ["EEUFS1C332B", 100, 81.2, 44],
+    ["EEUFS1C332B", 500, 344.0, 44],
+    ["EEUFS1C332B", 1000, 643.0, 44],
+    ["ESC105M050AC3AA", 1, 0.181, 37918],
+    ["ESC105M050AC3AA", 10, 0.79, 37918],
+    ["ESC105M050AC3AA", 100, 7.0, 37918],
+    ["ESC105M050AC3AA", 500, 26.0, 37918],
+    ["ESC105M050AC3AA", 1000, 46.0, 37918],
+    ["MC7805ACTG", 1, 0.671, 12712],
+    ["MC7805ACTG", 10, 4.8, 12712],
+    ["MC7805ACTG", 50, 20.75, 12712],
+    ["MC7805ACTG", 100, 34.7, 12712],
+    ["MC7805ACTG", 250, 83.5, 12712],
+    ["UES1H100MPM", 1, 0.576, 15150],
+    ["UES1H100MPM", 10, 2.86, 15150],
+    ["UES1H100MPM", 100, 21.6, 15150],
+    ["UHW1E222MHD", 1, 1.06, 3132],
+    ["UHW1E222MHD", 10, 5.74, 3132],
+    ["UHW1E222MHD", 100, 47.5, 3132],
+  ];
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetMouser = obtenerOCrearHoja(ss, "Variantes_Mouser", ["ID_Componente", "Variacion_Pack", "Precio_Pack_EUR", "Stock_Packs"]);
+
+  // Quitamos cualquier fila previa de estos mismos componentes antes de reinsertar (mismo patrón
+  // que guardarVariantesManualTME), para que la función sea segura de volver a ejecutar sin
+  // duplicar tramos.
+  const idsUnicos = Array.from(new Set(DATOS_MOUSER_INVESTIGADOS.map(function(f) { return f[0]; })));
+  idsUnicos.forEach(function(id) { limpiarVariantesExistentes(sheetMouser, id); });
+
+  const ultimaFila = Math.max(sheetMouser.getLastRow(), 1);
+  sheetMouser.getRange(ultimaFila + 1, 1, DATOS_MOUSER_INVESTIGADOS.length, 4).setValues(DATOS_MOUSER_INVESTIGADOS);
+  ordenarVariantes(sheetMouser);
+
+  const msgFilas = `Importados ${DATOS_MOUSER_INVESTIGADOS.length} tramos de precio de Mouser para ${idsUnicos.length} componentes.`;
+  const msgComp = crearFilasMouserEnComponentes();
+
+  return msgFilas + " " + msgComp;
+}
+
+function importarPreciosMouserInvestigadosUI() {
+  try {
+    const msg = importarPreciosMouserInvestigados();
+    SpreadsheetApp.getUi().alert("✅ " + msg);
+  } catch (err) {
+    SpreadsheetApp.getUi().alert("❌ Error: " + err.message);
+  }
+}
+
 function repararFilasTMEDesplazadasUI() {
   try {
     const msg = repararFilasTMEDesplazadas();
