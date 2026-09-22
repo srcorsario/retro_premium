@@ -993,6 +993,16 @@ function precargarTodasLasHojas() {
     ];
     if (ENV.SHEETS['Sustituciones']) hojas.push('Sustituciones');
     hojas.forEach(hoja => { obtenerDatos(hoja).catch(() => {}); });
+
+    // NUEVO (2026-09-22): estas tres NO están en config.js (no tienen gid publicado) -- se leen vía
+    // JSONP a Apps Script (obtenerDatosViaAppsScript, ver api.js), que hasta ahora se quedaba SIN
+    // precargar y SIN caché -- por eso "Stock Físico" (que necesita "Kits_Preparados" para el
+    // bloque "🛠️ Montar Kit") seguía "resistiéndose" aunque el resto de pestañas ya cargasen al
+    // instante. "Pedidos"/"Pedidos_Detalle" son las que usa el modal "🛃 Aplicar Aduanas" -- se
+    // precargan igual para que ese modal tampoco tenga que esperar la primera vez que se abre.
+    ['Kits_Preparados', 'Pedidos', 'Pedidos_Detalle'].forEach(hoja => {
+        obtenerDatosViaAppsScript(hoja).catch(() => {});
+    });
 }
 
 // Cuando la web esté lista

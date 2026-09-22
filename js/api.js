@@ -122,9 +122,16 @@ function separarCSVLinea(linea) {
 // Aduanas"). Usa JSONP (parámetro callback=..., que doGet ya soporta) en vez de fetch normal
 // porque el dominio de Apps Script no añade cabeceras CORS a sus respuestas -- un fetch() directo
 // fallaría en el navegador. JSONP no tiene ese problema porque es solo un <script> más.
-export function obtenerDatosViaAppsScript(nombrePestana, timeoutMs = 12000) {
+// MODIFICADO (2026-09-22): mismo problema que tenía obtenerDatos() con "Cargando..." al cambiar de
+// pestaña -- "Stock Físico" pedía esta hoja (Kits_Preparados) sin caché ninguna, así que aunque el
+// resto de pestañas ya cargaran al instante, esta se quedaba "resistiéndose" (la petición JSONP a
+// Apps Script suele tardar bastante más que el CSV público de Sheets). Se cachea con el mismo
+// criterio que obtenerDatos: solo si "ok" (la petición SÍ llegó a resolverse, aunque devuelva un
+// array vacío o un objeto de error de doGet convertido en []) -- un fallo real (timeout/onerror) no
+// se cachea, para poder reintentarlo la próxima vez.
+function obtenerDatosViaAppsScriptSinCache(nombrePestana, timeoutMs) {
     return new Promise((resolve) => {
-        if (ENV.API_URL === 'PENDING_APP_SCRIPT_URL') { resolve([]); return; }
+        if (ENV.API_URL === 'PENDING_APP_SCRIPT_URL') { resolve({ datos: [], ok: false }); return; }
 
         const nombreCallback = `jsonpPedidos_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
         let resuelto = false;
@@ -139,7 +146,7 @@ export function obtenerDatosViaAppsScript(nombrePestana, timeoutMs = 12000) {
             if (resuelto) return;
             resuelto = true;
             limpiar();
-            resolve(Array.isArray(data) ? data : []);
+            resolve({ datos: Array.isArray(data) ? data : [], ok: true });
         };
 
         const script = document.createElement('script');
@@ -148,18 +155,37 @@ export function obtenerDatosViaAppsScript(nombrePestana, timeoutMs = 12000) {
             if (resuelto) return;
             resuelto = true;
             limpiar();
-            resolve([]);
+            resolve({ datos: [], ok: false });
         };
 
         const temporizador = setTimeout(() => {
             if (resuelto) return;
             resuelto = true;
             limpiar();
-            resolve([]);
+            resolve({ datos: [], ok: false });
         }, timeoutMs);
 
         document.body.appendChild(script);
     });
+}
+
+const cacheAppsScriptPorHoja = {}; // { nombrePestana: Array<object> } -- mismo criterio que
+                                     // cacheDatosPorHoja de arriba (ver ese comentario).
+const promesasAppsScriptEnCurso = {};
+
+export function obtenerDatosViaAppsScript(nombrePestana, timeoutMs = 12000) {
+    if (cacheAppsScriptPorHoja[nombrePestana]) {
+        return Promise.resolve(cacheAppsScriptPorHoja[nombrePestana].map(fila => ({ ...fila })));
+    }
+    if (promesasAppsScriptEnCurso[nombrePestana]) return promesasAppsScriptEnCurso[nombrePestana];
+
+    const promesa = obtenerDatosViaAppsScriptSinCache(nombrePestana, timeoutMs).then(({ datos, ok }) => {
+        delete promesasAppsScriptEnCurso[nombrePestana];
+        if (ok) cacheAppsScriptPorHoja[nombrePestana] = datos;
+        return datos.map(fila => ({ ...fila }));
+    });
+    promesasAppsScriptEnCurso[nombrePestana] = promesa;
+    return promesa;
 }
 
 // NUEVO 2026-09-11: consulta puntual de stock/precio en Mouser para un componente, vía el mismo
