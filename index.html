@@ -77,7 +77,11 @@
                 <h2>🧾 Generar Pedido</h2>
                 <p style="color: var(--text-secondary); font-size: 14px;">Selecciona los kits que vas a montar y cuántas unidades de cada uno. Se suman los componentes de todos los kits marcados.</p>
 
-                <div id="pedido-lista-kits" style="display:flex; flex-direction:column; gap:8px; margin-bottom:15px; max-height:280px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; padding:10px;">
+                <!-- MODIFICADO (2026-09-22, a petición del usuario -- la barra de scroll interna
+                     resultaba molesta): quitado el "max-height:280px; overflow-y:auto" que obligaba
+                     a esta lista a scrollear por su cuenta -- ahora se expande entera y el scroll de
+                     toda la página se encarga, igual que el resto de tablas de la web. -->
+                <div id="pedido-lista-kits" style="display:flex; flex-direction:column; gap:8px; margin-bottom:15px; border:1px solid var(--border-color); border-radius:6px; padding:10px;">
                     <p style="color:var(--text-secondary); font-size:13px;">Cargando kits...</p>
                 </div>
 
