@@ -977,13 +977,36 @@ async function cargarVista(nombrePestana) {
     if (tituloVista) tituloVista.innerText = `${nombrePestana} (${datos.length} registros)`;
 }
 
+// NUEVO (2026-09-22, a petición del usuario -- "cada vez que cambio de pestaña vuelve a cargar
+// datos, podemos precargar?"): en cuanto carga la pestaña por defecto, se lanzan en segundo plano
+// (sin esperar, sin bloquear nada) las peticiones del resto de pestañas y de las hojas que usa el
+// generador de "📦 Pedidos" -- así, cuando el usuario cambie de pestaña o pulse "Calcular Pedido",
+// obtenerDatos() ya encuentra la respuesta en caché (ver api.js) y no hay que esperar otra vez al
+// CSV publicado de Google. Cada obtenerDatos() ya gestiona sus propios reintentos/errores por su
+// cuenta -- aquí basta con ignorarlos (.catch(() => {})) para que un fallo puntual precargando una
+// hoja no genere una promesa rechazada sin capturar en la consola.
+function precargarTodasLasHojas() {
+    const hojas = [
+        'Componentes', 'Stock_Almacen', 'Kits_Consolas',
+        'Variantes_LCSC', 'Variantes_AliExpress', 'Variantes_TME', 'Variantes_Mouser',
+        'Gastos_Extra'
+    ];
+    if (ENV.SHEETS['Sustituciones']) hojas.push('Sustituciones');
+    hojas.forEach(hoja => { obtenerDatos(hoja).catch(() => {}); });
+}
+
 // Cuando la web esté lista
 document.addEventListener('DOMContentLoaded', () => {
     console.log(`${ENV.APP_NAME} iniciado`);
-    
+
     // Cargar la pestaña por defecto
     cargarVista(vistaActual);
-    
+
+    // Precarga en segundo plano del resto de pestañas (ver comentario de la función) -- se lanza
+    // justo después, no antes, para no competir por la conexión con la petición de la pestaña que
+    // el usuario está viendo ahora mismo.
+    precargarTodasLasHojas();
+
     // Inicializar el módulo de pedidos para el selector de kits y botones
     inicializarModuloPedidos();
 

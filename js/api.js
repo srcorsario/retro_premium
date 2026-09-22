@@ -17,12 +17,46 @@ async function fetchConTimeout(url, timeoutMs) {
     }
 }
 
-export async function obtenerDatos(nombrePestana) {
+// NUEVO (2026-09-22, a petición del usuario -- "cada vez que cambio de pestaña vuelve a cargar
+// datos, es muy molesto, podemos precargar?"): caché en memoria por pestaña, válida para toda esta
+// carga de página. Antes, cambiar de pestaña (o volver a una ya vista) pedía otra vez el CSV
+// publicado de Google cada vez, aunque ya se hubiera pedido antes en esta misma sesión -- lento
+// además del propio retraso de publicación de Google. Es seguro cachear así de "para siempre"
+// (dentro de esta carga de página) porque CUALQUIER acción que cambia datos en Sheets ya fuerza un
+// location.reload() al terminar (ver pedidos.js/app.js) -- la única forma de que los datos
+// cambien de verdad es recargar la web entera, que reinicia este módulo y borra la caché sola.
+// Solo se cachea un resultado que se haya podido leer bien (ok:true) -- un fallo de red (tras
+// agotar los 2 intentos) NO se cachea, así que la siguiente vez que se pida esa pestaña se
+// reintenta desde cero, igual que antes de tener caché.
+const cacheDatosPorHoja = {}; // { nombrePestana: Array<object> }
+const promesasEnCurso = {};   // { nombrePestana: Promise } -- evita pedir la misma hoja dos veces
+                               // a la vez (p.ej. la precarga en segundo plano y la pestaña que el
+                               // usuario abre a mano casi al mismo tiempo).
+
+export function obtenerDatos(nombrePestana) {
+    if (cacheDatosPorHoja[nombrePestana]) {
+        // Copia superficial de cada fila -- si algún sitio la modifica in situ (p.ej.
+        // calcularKitsPorComponente en app.js, que añade "Kits_que_lo_usan" a cada objeto), esa
+        // mutación no debe filtrarse a la caché ni a otra pestaña que pida los mismos datos luego.
+        return Promise.resolve(cacheDatosPorHoja[nombrePestana].map(fila => ({ ...fila })));
+    }
+    if (promesasEnCurso[nombrePestana]) return promesasEnCurso[nombrePestana];
+
+    const promesa = obtenerDatosSinCache(nombrePestana).then(({ datos, ok }) => {
+        delete promesasEnCurso[nombrePestana];
+        if (ok) cacheDatosPorHoja[nombrePestana] = datos;
+        return datos.map(fila => ({ ...fila }));
+    });
+    promesasEnCurso[nombrePestana] = promesa;
+    return promesa;
+}
+
+async function obtenerDatosSinCache(nombrePestana) {
     // Busca el gid correspondiente a la pestaña que le pedimos
     const gid = ENV.SHEETS[nombrePestana];
     if (!gid) {
         console.error(`No se encontró el GID para la pestaña: ${nombrePestana}`);
-        return [];
+        return { datos: [], ok: false };
     }
 
     // Usamos la URL pública y súper estable que me confirmaste
@@ -33,14 +67,14 @@ export async function obtenerDatos(nombrePestana) {
             const response = await fetchConTimeout(url, 12000);
             if (!response.ok) throw new Error('Error en la red al leer CSV');
             const text = await response.text();
-            return parsearCSVaJSON(text);
+            return { datos: parsearCSVaJSON(text), ok: true };
         } catch (error) {
             const motivo = error.name === 'AbortError' ? 'tardó demasiado (timeout)' : error.message;
             console.error(`Error al obtener ${nombrePestana} (intento ${intento}/2): ${motivo}`);
-            if (intento === 2) return [];
+            if (intento === 2) return { datos: [], ok: false };
         }
     }
-    return [];
+    return { datos: [], ok: false };
 }
 
 function parsearCSVaJSON(csvText) {
