@@ -23,23 +23,28 @@ const LS_PRESUPUESTO = 'retro_premium_presupuesto_pedido';
 const ORDEN_PROVEEDORES = ['LCSC', 'ALIEXPRESS', 'TME', 'MOUSER'];
 const ETIQUETA_PROVEEDOR = { LCSC: 'LCSC', ALIEXPRESS: 'AliExpress', TME: 'TME', MOUSER: 'Mouser' };
 
-// NUEVO: orden de PRESELECCIÓN (no de visualización -- eso lo sigue marcando ORDEN_PROVEEDORES).
-// A partir de ahora se intenta marcar TME por defecto aunque el artículo en sí salga más caro,
-// porque entre no pasar por aduanas y evitar los gastos de gestión de envío de otros couriers
-// (ver [[retro-componentes-web]] sobre FedEx/DHL/UPS) suele salir más económico en conjunto.
-// Si TME no tiene stock suficiente para cubrir la cantidad pedida, se cae al resto en el orden
-// habitual.
-// NUEVO (2026-09-22): Mouser añadido justo después de TME -- su envío es DDP a la UE (aranceles ya
-// incluidos en el precio mostrado, sin sorpresas al llegar, ver comentario en GASTOS_ENVIO), así
-// que evita el mismo problema de aduanas que TME, aunque el artículo en sí salga algo más caro que
-// LCSC/AliExpress. Antes no podía entrar aquí porque no existía ninguna hoja de stock/precio por
-// componente para Mouser -- ahora "Variantes_Mouser" (ver cargarDatosPedido) ya la aporta, con los
-// datos investigados a mano (Codigo.gs, importarPreciosMouserInvestigados) y actualizable después
-// tramo a tramo directamente en esa hoja. Si ni TME ni Mouser cubren la cantidad, se cae a LCSC y
-// luego a AliExpress, como antes.
+// NUEVO: GRUPOS de PRESELECCIÓN (no de visualización -- eso lo sigue marcando ORDEN_PROVEEDORES).
+// TME y Mouser se agrupan juntos porque ninguno de los dos pasa por aduanas ni tiene los gastos de
+// gestión de envío de otros couriers (ver [[retro-componentes-web]] sobre FedEx/DHL/UPS), así que
+// entre ellos dos se preselecciona el que salga MÁS BARATO para la cantidad pedida (no uno fijo).
+// Si ninguno de los dos cubre la cantidad completa, se cae a LCSC y luego a AliExpress, en ese
+// orden fijo (ahí sí hay aduanas de por medio, así que se mantiene el criterio de evitarlas antes
+// que el precio puro).
+// MODIFICADO (2026-09-22, a petición del usuario -- "si el artículo lo tiene TME y Mouser no me
+// seleccionas el más económico de los 2 sino como predeterminado TME... debe ser por
+// predeterminado el que mejor precio me dé"): antes TME ganaba siempre a Mouser aunque su precio
+// para esa cantidad saliera más caro; ahora se compara el precio real de ambos (calcularMejorCompra/
+// precioUnitario, según el sitio) y gana el más barato. Se puede seguir cambiando a mano el radio
+// de proveedor como hasta ahora -- esto solo cambia cuál sale marcado por defecto.
+// NUEVO (2026-09-22): Mouser añadido al grupo de TME -- su envío es DDP a la UE (aranceles ya
+// incluidos en el precio mostrado, sin sorpresas al llegar, ver comentario en GASTOS_ENVIO). Antes
+// no podía entrar aquí porque no existía ninguna hoja de stock/precio por componente para Mouser --
+// ahora "Variantes_Mouser" (ver cargarDatosPedido) ya la aporta, con los datos investigados a mano
+// (Codigo.gs, importarPreciosMouserInvestigados) y actualizable después tramo a tramo directamente
+// en esa hoja.
 // NUEVO: exportado -- app.js lo reutiliza para el precio estimado de Kits (misma preselección
 // que en el generador de pedido, en vez de reinventar el orden ahí).
-export const ORDEN_PRESELECCION = ['TME', 'MOUSER', 'LCSC', 'ALIEXPRESS'];
+export const GRUPOS_PRESELECCION = [['TME', 'MOUSER'], ['LCSC'], ['ALIEXPRESS']];
 
 // NUEVO: Gastos de envío fijos por tienda (de momento a mano; el día que se quiera afinar por
 // pedido real se pueden leer de la hoja "Gastos_Extra" en vez de estos valores fijos).
@@ -53,7 +58,7 @@ export const ORDEN_PRESELECCION = ['TME', 'MOUSER', 'LCSC', 'ALIEXPRESS'];
 // de 75€ de pedido, que es el importe habitual de un pedido de restock -- de ahí 0€ en ambos campos
 // como aproximación razonable (igual de simplificado que el resto de esta tabla, que ya asume un
 // coste fijo por pedido en vez de calcularlo por importe real).
-// NUEVO (2026-09-22): ya está en ORDEN_PRESELECCION (ver comentario ahí) -- hacía falta la hoja
+// NUEVO (2026-09-22): ya está en GRUPOS_PRESELECCION (ver comentario ahí) -- hacía falta la hoja
 // "Variantes_Mouser" con datos de stock/precio por componente, que ya existe.
 const GASTOS_ENVIO = {
     LCSC: { envio: 40, aduanas: 30 },
@@ -515,7 +520,7 @@ function calcularNecesidadYStockPorGrupo(idsNecesarios, necesidades, sustitucion
 // quita dejará de pedirse en TODOS los componentes que necesitaba, incluidos los compartidos con
 // otros kits (el ahorro real de esa unidad, una vez recalculados los tramos de precio), y nunca dos
 // versiones del optimizador quedan inconsistentes con la tabla real porque usa el mismo
-// calcularMejorCompra/ORDEN_PRESELECCION que la tabla. Si el usuario prefiere en cambio recortar la
+// calcularMejorCompra/GRUPOS_PRESELECCION que la tabla. Si el usuario prefiere en cambio recortar la
 // cantidad de un componente concreto (asumiendo que un kit se complete más adelante con otro
 // pedido), puede seguir haciéndolo a mano en "Cantidad a pedir" -- para eso está la columna "Usado
 // en" de cada fila (ver renderTablaPedido), que avisa de a qué kits afecta.
@@ -523,7 +528,7 @@ function calcularNecesidadYStockPorGrupo(idsNecesarios, necesidades, sustitucion
 
 // Simula el precio total de un pedido para un vector de cantidades por kit (sin tocar el DOM ni
 // depender de lo que haya seleccionado el usuario en la tabla) -- misma lógica de agrupación,
-// preselección de proveedor (ORDEN_PRESELECCION) y cálculo por tramos (calcularMejorCompra) que usa
+// preselección de proveedor (GRUPOS_PRESELECCION) y cálculo por tramos (calcularMejorCompra) que usa
 // la tabla real, para que el resultado del optimizador sea coherente con lo que luego se vería al
 // pulsar "Calcular Pedido" con ese mismo vector de cantidades.
 function simularCoste(seleccionKits, datosPedido) {
@@ -590,12 +595,16 @@ function simularCoste(seleccionKits, datosPedido) {
             });
         }
 
-        // Misma preselección que la tabla real: TME primero si cubre, si no cae a LCSC/AliExpress.
+        // Misma preselección que la tabla real: dentro de cada grupo (TME+Mouser primero, luego
+        // LCSC, luego AliExpress) se elige la opción más barata de las que cubran la cantidad
+        // completa -- ver GRUPOS_PRESELECCION.
         let elegido = null;
-        for (const proveedorPref of ORDEN_PRESELECCION) {
-            const candidata = opcionesConDatos.find(o => o.proveedor === proveedorPref);
-            if (candidata && candidata.hayStock && candidata.compra.desglose.length > 0 && candidata.compra.logrado) {
-                elegido = candidata;
+        for (const grupoPref of GRUPOS_PRESELECCION) {
+            const candidatas = opcionesConDatos.filter(o =>
+                grupoPref.includes(o.proveedor) && o.hayStock && o.compra.desglose.length > 0 && o.compra.logrado
+            );
+            if (candidatas.length > 0) {
+                elegido = candidatas.sort((a, b) => a.compra.totalPrecio - b.compra.totalPrecio)[0];
                 break;
             }
         }
@@ -951,15 +960,17 @@ function renderTablaPedido(contenedor, idsNecesarios, necesidades, sustituciones
         });
 
         // NUEVO: la opción marcada por defecto ya NO es "la primera con stock suficiente en el
-        // orden de visualización" -- ahora se prioriza TME aunque el artículo salga más caro,
-        // para evitar aduanas y gastos de gestión de otros couriers (ver ORDEN_PRESELECCION).
-        // Solo si TME no cubre la cantidad completa se cae al resto en su orden habitual.
+        // orden de visualización". Se agrupan TME+Mouser (evitan aduanas, ver GRUPOS_PRESELECCION)
+        // y dentro de ese grupo gana el que salga más barato para la cantidad pedida, no uno fijo.
+        // Solo si NINGUNO de los dos cubre la cantidad completa se cae a LCSC y luego a AliExpress.
         let proveedorPreseleccionado = null;
         if (!preseleccionadoPorGrupo[grupo]) {
-            for (const proveedorPref of ORDEN_PRESELECCION) {
-                const candidata = opcionesConDatos.find(o => o.proveedor === proveedorPref);
-                if (candidata && candidata.hayStock && candidata.compra.desglose.length > 0 && candidata.compra.logrado) {
-                    proveedorPreseleccionado = proveedorPref;
+            for (const grupoPref of GRUPOS_PRESELECCION) {
+                const candidatas = opcionesConDatos.filter(o =>
+                    grupoPref.includes(o.proveedor) && o.hayStock && o.compra.desglose.length > 0 && o.compra.logrado
+                );
+                if (candidatas.length > 0) {
+                    proveedorPreseleccionado = candidatas.sort((a, b) => a.compra.totalPrecio - b.compra.totalPrecio)[0].proveedor;
                     break;
                 }
             }

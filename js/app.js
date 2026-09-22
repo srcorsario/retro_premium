@@ -3,7 +3,7 @@ import ENV from './config.js';
 import { obtenerDatos, actualizarDatos, obtenerDatosViaAppsScript } from './api.js';
 import { renderTabla, mostrarMensaje, renderDetalleMontarKit } from './ui.js';
 import { inicializarModuloPedidos } from './pedidos.js';
-import { inicializarModuloPedido, ORDEN_PRESELECCION, totalGastosEnvio } from './pedido.js'; // NUEVO: generador de pedido
+import { inicializarModuloPedido, GRUPOS_PRESELECCION, totalGastosEnvio } from './pedido.js'; // NUEVO: generador de pedido
 
 // Variable para saber qué pestaña estamos viendo
 let vistaActual = 'Componentes';
@@ -101,10 +101,14 @@ function parseNumeroES(valor) {
 // teniendo en cuenta el proveedor de cada artículo, teniendo en cuenta el predeterminado y/o el
 // stock"): el precio de un kit ya no es solo "componente × precio/ud más barato entre proveedores".
 // Ahora, por cada componente:
-//   1. El proveedor se elige con la MISMA preselección que el generador de pedido (ORDEN_PRESELECCION,
-//      TME primero) en vez de "el más barato" -- solo se cae a LCSC/AliExpress si TME no tiene esa
-//      opción disponible en el proveedor ahora mismo. Si ningún proveedor tiene stock real, se usa
-//      la opción de referencia más barata (como antes) y el kit se marca "incompleto".
+//   1. El proveedor se elige con la MISMA preselección que el generador de pedido (GRUPOS_PRESELECCION):
+//      TME y Mouser compiten entre sí por precio (evitan aduanas los dos) y solo se cae a
+//      LCSC/AliExpress si NINGUNO de los dos tiene esa opción disponible ahora mismo. Si ningún
+//      proveedor tiene stock real, se usa la opción de referencia más barata (como antes) y el kit
+//      se marca "incompleto".
+//   MODIFICADO (2026-09-22): antes TME ganaba siempre a Mouser aunque saliera más caro -- ahora se
+//   compara precioUnitario de ambos y gana el más barato (ver comentario de GRUPOS_PRESELECCION en
+//   pedido.js).
 //   2. Los gastos de envío/aduanas (GASTOS_ENVIO, ver pedido.js) de cada proveedor realmente usado
 //      en el kit se suman UNA vez por proveedor y se PRORRATEAN entre sus componentes de ese kit,
 //      proporcionalmente a lo que cuesta cada uno (el componente más caro de ese proveedor absorbe
@@ -211,9 +215,12 @@ function calcularPreciosPorKit(datosKits, datosComponentes, sustituciones, canti
         if (!opciones || opciones.length === 0) return null;
 
         let elegida = null;
-        for (const proveedor of ORDEN_PRESELECCION) {
-            const opt = opciones.find(o => o.proveedor === proveedor && !o.sinStock);
-            if (opt) { elegida = opt; break; }
+        for (const grupoPref of GRUPOS_PRESELECCION) {
+            const candidatas = opciones.filter(o => grupoPref.includes(o.proveedor) && !o.sinStock);
+            if (candidatas.length > 0) {
+                elegida = candidatas.sort((a, b) => a.precioUnitario - b.precioUnitario)[0];
+                break;
+            }
         }
         if (!elegida) {
             // Ningún proveedor tiene esta opción disponible ahora mismo -- usamos la más barata de
